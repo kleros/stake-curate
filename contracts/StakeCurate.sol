@@ -212,7 +212,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint256 newStake = fullStake - _amount;
     account.fullStake = compress(newStake);
     account.withdrawingTimestamp = 0;
-    // send the amount
+    payable(account.wallet).send(_amount);
     emit AccountWithdrawn(_accountId, _amount);
   }
 
