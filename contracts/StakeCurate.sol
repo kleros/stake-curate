@@ -62,9 +62,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     address governor;
     uint32 requiredStake;
     uint32 removalPeriod;
-    uint32 freespace;
-    bytes arbitratorExtraData;
-    // figure out MetaEvidence again? for now, just make it work with current standard
+    uint32 arbitratorExtraDataId; // arbitratorExtraData cant mutate (because of risks during dispute)
+    // we can discuss to use uint64 instead
   }
 
   // this is the equivalent of "Slot" in Slot Curate
@@ -82,17 +81,16 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   struct DisputeSlot {
     uint256 arbitratorDisputeId;
+    // ----
     address challenger;
     uint64 itemSlot;
     DisputeState state;
     uint8 currentRound;
-    uint16 freespace;
-    // ----
-    uint64 nContributions;
+    uint64 nContributions; // -- first 16 bits are in 2nd slot, last 48 bits in 3rd slot.
     uint64[2] pendingWithdraws; // pendingWithdraws[_party], used to set the disputeSlot free
     uint40 appealDeadline; // cache appealDeadline. saves gas or avoids cross-chain messaging.
     Party winningParty; // for withdrawals, set at rule()
-    uint16 freespace2;
+    uint32 arbitratorExtraDataId; // make sure arbitratorExtraData doesn't change
   }
 
   // Contribution amounts are kept uint80 to have them compatible
@@ -126,8 +124,8 @@ contract StakeCurate is IArbitrable, IEvidence {
   event AccountStartWithdraw(uint64 _accountId);
   event AccountWithdrawn(uint64 _accountId, uint256 _amount);
 
-  event ListCreated(address _governor, uint32 _requiredStake, uint32 _removalPeriod, bytes _arbitratorExtraData, string _ipfsUri);
-  event ListUpdated(uint64 _listId, address _governor, uint32 _requiredStake, uint32 _removalPeriod, string _ipfsUri);
+  event ListCreated(address _governor, uint32 _requiredStake, uint32 _removalPeriod, uint32 _arbitratorExtraDataId, string _ipfsUri);
+  event ListUpdated(uint64 _listId, address _governor, uint32 _requiredStake, uint32 _removalPeriod, uint32 _arbitratorExtraDataId, string _ipfsUri);
 
   event ItemAdded(uint64 _itemSlot, uint64 _listId, string _ipfsUri);
   event ItemStartRemoval(uint64 _itemSlot);
@@ -153,14 +151,17 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   uint64 internal listCount;
   uint64 internal accountCount;
+  uint32 internal arbitratorExtraDataCount;
 
   mapping(uint64 => Account) internal accounts;
   mapping(uint64 => List) internal lists;
   mapping(uint64 => Item) internal items;
   mapping(uint64 => DisputeSlot) internal disputes;
   mapping(uint64 => mapping(uint64 => Contribution)) internal contributions; // contributions[disputeSlot][n]
-  mapping(uint64 => mapping(uint8 => RoundContributions)) internal roundContributionsMap; // roundContributionsMap[disputeSlot][round]
+  // roundContributionsMap[disputeSlot][round]
+  mapping(uint64 => mapping(uint8 => RoundContributions)) internal roundContributionsMap;
   mapping(uint256 => uint64) internal disputeIdToDisputeSlot; // disputeIdToDisputeSlot[disputeId]
+  mapping(uint32 => bytes) internal arbitratorExtraDataMap;
 
   /** @dev Constructs the StakeCurate contract.
    *  @param _arbitrator The address of the arbitrator.
@@ -216,19 +217,34 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit AccountWithdrawn(_accountId, _amount);
   }
 
+
+  /**
+   * overflow estimate for optimistic rollup: 
+   * 4294967296 * 3 * 32 * 3 * (100 / 1000000000) = 123.6k ETH
+   * id_space * slots * bytes_per_slot * gas_per_calldata_byte * gas_price
+   * that's an (estimated) ETH cost to overflow the arbitratorExtraDataId
+   * at 100 calls per second, that's 1.38 years
+   * for a stake curate deployed in mainnet:
+   * 4294967296 * 26000 * (100 / 1000000000) = 11.16M ETH
+   * time unknown.
+  */
+  function createArbitratorExtraData(bytes calldata _arbitratorExtraData) external {
+    arbitratorExtraDataMap[arbitratorExtraDataCount++] = _arbitratorExtraData;
+  }
+
   function createList(
     address _governor,
     uint32 _requiredStake,
     uint32 _removalPeriod,
-    bytes calldata _arbitratorExtraData,
+    uint32 _arbitratorExtraDataId,
     string calldata _ipfsUri
   ) external {
     List storage list = lists[listCount++];
     list.governor = _governor;
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
-    list.arbitratorExtraData = _arbitratorExtraData;
-    emit ListCreated(_governor, _requiredStake, _removalPeriod, _arbitratorExtraData, _ipfsUri);
+    list.arbitratorExtraDataId = _arbitratorExtraDataId;
+    emit ListCreated(_governor, _requiredStake, _removalPeriod, _arbitratorExtraDataId, _ipfsUri);
   }
 
   function updateList(
@@ -236,22 +252,15 @@ contract StakeCurate is IArbitrable, IEvidence {
     address _governor,
     uint32 _requiredStake,
     uint32 _removalPeriod,
-    // bytes calldata _arbitratorExtraData,
+    uint32 _arbitratorExtraDataId,
     string calldata _ipfsUri
   ) external {
     List storage list = lists[_listId];
     list.governor = _governor;
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
-
-    // changing arbitratorExtraData would be a security hazard, in case there's an ongoing Dispute with this list.
-    // would also make subgraph way more complicated.
-    // needs some thought to be able to update this value.
-    // an idea is, go back to immutable settings structure, and save the settingsId in the dispute on creation.
-    // todo think about it
-
-    // list.arbitratorExtraData = _arbitratorExtraData;
-    emit ListUpdated(_listId, _governor, _requiredStake, _removalPeriod, _ipfsUri);
+    list.arbitratorExtraDataId = _arbitratorExtraDataId;
+    emit ListUpdated(_listId, _governor, _requiredStake, _removalPeriod, _arbitratorExtraDataId, _ipfsUri);
   }
 
   function addItem(
@@ -313,7 +322,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(itemCanBeChallenged(item, list), "Item cannot be challenged");
     uint64 disputeSlot = firstFreeDisputeSlot(_fromDisputeSlot);
     // Begin. Should I require enough for the cost?
-    uint256 arbitratorDisputeId = arbitrator.createDispute{value: msg.value}(RULING_OPTIONS, list.arbitratorExtraData);
+    bytes memory arbitratorExtraData = arbitratorExtraDataMap[list.arbitratorExtraDataId];
+    uint256 arbitratorDisputeId = arbitrator.createDispute{value: msg.value}(RULING_OPTIONS, arbitratorExtraData);
     disputeIdToDisputeSlot[arbitratorDisputeId] = disputeSlot;
 
     item.slotState = ItemSlotState.Disputed;
@@ -333,7 +343,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     dispute.pendingWithdraws[0] = 0;
     dispute.pendingWithdraws[1] = 0;
     dispute.appealDeadline = 0;
-    dispute.freespace2 = 1; // to make sure slot never cannot go to zero.
+    dispute.arbitratorExtraDataId = list.arbitratorExtraDataId;
 
     RoundContributions storage roundContributions = roundContributionsMap[disputeSlot][1];
     roundContributions.filler = 1;
@@ -395,8 +405,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(dispute.state == DisputeState.Used, "Dispute must be Used");
 
     _verifyUnderAppealDeadline(dispute);
-
-    uint256 appealCost = arbitrator.appealCost(dispute.arbitratorDisputeId, list.arbitratorExtraData);
+    bytes memory arbitratorExtraData = arbitratorExtraDataMap[list.arbitratorExtraDataId];
+    uint256 appealCost = arbitrator.appealCost(dispute.arbitratorDisputeId, arbitratorExtraData);
     uint256 totalAmountNeeded = (appealCost * MULTIPLIER);
 
     uint256 currentAmount = contribDecompress(
@@ -405,7 +415,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     );
     require(currentAmount >= totalAmountNeeded, "Not enough to fund round");
     // All clear, let's appeal
-    arbitrator.appeal{value: appealCost}(dispute.arbitratorDisputeId, list.arbitratorExtraData);
+    arbitrator.appeal{value: appealCost}(dispute.arbitratorDisputeId, arbitratorExtraData);
     // Record the cost for sharing the spoils later
     roundContributionsMap[_disputeSlot][nextRound].appealCost = contribCompress(appealCost);
 
