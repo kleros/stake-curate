@@ -8,6 +8,9 @@
     "@kleros/erc-792": "^8.0.0",
     "hardhat": "^2.8.3"
   },
+  "prettier": {
+    "semi": false
+  },
   "devDependencies": {
     "@nomiclabs/hardhat-ethers": "^2.0.4",
     "@nomiclabs/hardhat-etherscan": "^3.0.0",
