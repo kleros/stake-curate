@@ -19,23 +19,10 @@ import "@kleros/erc-792/contracts/erc-1497/IEvidence.sol";
  */
 contract StakeCurate is IArbitrable, IEvidence {
 
-  enum Party {
-    Staker,
-    Challenger
-  }
-
-  enum DisputeState {
-    Free,
-    Used,
-    Withdrawing
-  }
-
+  enum Party { Staker, Challenger }
+  enum DisputeState { Free, Used, Withdrawing }
   // Item may be free even if "Used"! Use itemIsFree view. (because of removingTimestamp)
-  enum ItemSlotState {
-    Free,
-    Used,
-    Disputed
-  }
+  enum ItemSlotState { Free, Used, Disputed }
 
   // loses up to 4 gwei, used for Contribution amounts
   uint256 internal constant AMOUNT_BITSHIFT = 32;
@@ -63,10 +50,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 requiredStake;
     uint32 removalPeriod;
     uint32 arbitratorExtraDataId; // arbitratorExtraData cant mutate (because of risks during dispute)
-    // we can discuss to use uint64 instead
+    // we can discuss to use uint64 instead, if uint32 was too vulnerable to spam attack
   }
 
-  // this is the equivalent of "Slot" in Slot Curate
   struct Item {
     uint64 accountId;
     uint64 listId;
@@ -76,7 +62,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     ItemSlotState slotState;
     uint32 submissionTimestamp; // only used to make evidenceGroupId
     uint16 freespace; // you could hold bounties here?
-
   }
 
   struct DisputeSlot {
@@ -86,7 +71,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 itemSlot;
     DisputeState state;
     uint8 currentRound;
-    uint64 nContributions; // -- first 16 bits are in 2nd slot, last 48 bits in 3rd slot.
+    uint64 nContributions; // ---- first 16 bits are in 2nd slot, last 48 bits in 3rd slot.
     uint64[2] pendingWithdraws; // pendingWithdraws[_party], used to set the disputeSlot free
     uint40 appealDeadline; // cache appealDeadline. saves gas or avoids cross-chain messaging.
     Party winningParty; // for withdrawals, set at rule()
@@ -124,8 +109,10 @@ contract StakeCurate is IArbitrable, IEvidence {
   event AccountStartWithdraw(uint64 _accountId);
   event AccountWithdrawn(uint64 _accountId, uint256 _amount);
 
-  event ListCreated(address _governor, uint32 _requiredStake, uint32 _removalPeriod, uint32 _arbitratorExtraDataId, string _ipfsUri);
-  event ListUpdated(uint64 _listId, address _governor, uint32 _requiredStake, uint32 _removalPeriod, uint32 _arbitratorExtraDataId, string _ipfsUri);
+  event ListCreated(address _governor, uint32 _requiredStake, uint32 _removalPeriod,
+    uint32 _arbitratorExtraDataId, string _ipfsUri);
+  event ListUpdated(uint64 _listId, address _governor, uint32 _requiredStake,
+    uint32 _removalPeriod, uint32 _arbitratorExtraDataId, string _ipfsUri);
 
   event ItemAdded(uint64 _itemSlot, uint64 _listId, string _ipfsUri);
   event ItemStartRemoval(uint64 _itemSlot);
@@ -147,7 +134,8 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // Note: This contract is vulnerable to deprecated arbitrator. Redeploying contract would mean that
   // everyone would have to manually withdraw their stake and submit all items again in the newer version.
-  IArbitrator internal immutable arbitrator; // only one arbitrator per contract. changing arbitrator requires redeployment
+  // only one arbitrator per contract. changing arbitrator requires redeployment
+  IArbitrator internal immutable arbitrator;
 
   uint64 internal listCount;
   uint64 internal accountCount;
@@ -191,7 +179,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit AccountFunded(_accountId, fullStake);
   }
 
-  // Review this design later
   function startWithdrawAccount(uint64 _accountId) external {
     Account storage account = accounts[_accountId];
     require(account.wallet == msg.sender);
@@ -216,7 +203,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     payable(account.wallet).send(_amount);
     emit AccountWithdrawn(_accountId, _amount);
   }
-
 
   /**
    * overflow estimate for optimistic rollup: 
@@ -576,7 +562,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     RoundContributions memory _roundContributions,
     Party _winningParty
   ) private {
-    uint256 spoils = contribDecompress(_roundContributions.partyTotal[0] + _roundContributions.partyTotal[1] - _roundContributions.appealCost);
+    uint256 spoils = contribDecompress(
+      _roundContributions.partyTotal[0]
+      + _roundContributions.partyTotal[1]
+      - _roundContributions.appealCost
+    );
     uint256 share = (spoils * uint256(_contribution.amount)) / uint256(_roundContributions.partyTotal[uint256(_winningParty)]);
     // should use transfer instead? if transfer fails, then disputeSlot will stay in DisputeState.Withdrawing
     // if a transaction reverts due to not enough gas, does the send() ether remain sent? if that's so,
@@ -614,8 +604,6 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   function itemCanBeChallenged(Item memory _item, List memory _list) internal view returns (bool) {
-    // the item slot must be in use
-    // the item must not be removed
     bool free = itemIsFree(_item, _list);
     // the item must have same or more committed amount than required for list
     bool enoughCommitted = decompress(_item.commitedStake) >= decompress(_list.requiredStake);
@@ -623,6 +611,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   // ----- PURE FUNCTIONS -----
+  // Pasted from Cint32.sol
   function compress(uint256 _amount) internal pure returns (uint32) {
     // maybe binary search to find ndigits? there should be a better way
     uint8 digits = 0;
@@ -657,7 +646,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     bool pendingWithdrawal = pendingWithdrawalAddend != 0;
     uint8 partyAddend = _contribdata & 64;
     Party party = Party(partyAddend >> 6);
-
     return (pendingWithdrawal, party);
   }
 }
