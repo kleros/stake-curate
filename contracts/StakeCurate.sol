@@ -22,7 +22,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used, Withdrawing }
   // Item may be free even if "Used"! Use itemIsFree view. (because of removingTimestamp)
-  enum ItemSlotState { Free, Used, Disputed }
+  enum ItemSlotState { Virgin, Used, Disputed }
 
   // loses up to 4 gwei, used for Contribution amounts
   uint256 internal constant AMOUNT_BITSHIFT = 32;
@@ -104,18 +104,21 @@ contract StakeCurate is IArbitrable, IEvidence {
     * subgraph can figure everything out. e.g. think ahead, like for L2s
    */
 
-  event AccountCreated(uint256 _fullStake);
+  event AccountCreated();
   event AccountFunded(uint64 _accountId, uint256 _fullStake);
   event AccountStartWithdraw(uint64 _accountId);
   event AccountWithdrawn(uint64 _accountId, uint256 _amount);
+
+  event ArbitratorExtraDataCreated(bytes _arbitratorExtraData);
 
   event ListCreated(address _governor, uint32 _requiredStake, uint32 _removalPeriod,
     uint32 _arbitratorExtraDataId, string _ipfsUri);
   event ListUpdated(uint64 _listId, address _governor, uint32 _requiredStake,
     uint32 _removalPeriod, uint32 _arbitratorExtraDataId, string _ipfsUri);
 
-  event ItemAdded(uint64 _itemSlot, uint64 _listId, string _ipfsUri);
+  event ItemAdded(uint64 _itemSlot, uint64 _listId, uint64 _accountId, string _ipfsUri);
   event ItemStartRemoval(uint64 _itemSlot);
+  event ItemStopRemoval(uint64 _itemSlot);
   // there's no need for "ItemRemoved", since it will automatically be considered removed after the period.
 
   event ItemChallenged(uint64 _itemSlot, uint64 _disputeSlot);
@@ -156,10 +159,10 @@ contract StakeCurate is IArbitrable, IEvidence {
    */
   constructor(
     address _arbitrator,
-    string memory _addMetaEvidence
+    string memory _metaEvidence
   ) {
     arbitrator = IArbitrator(_arbitrator);
-    emit MetaEvidence(0, _addMetaEvidence);
+    emit MetaEvidence(0, _metaEvidence);
   }
 
   // ----- PUBLIC FUNCTIONS -----
@@ -169,7 +172,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 compressedStake = compress(msg.value);
     account.wallet = msg.sender;
     account.fullStake = compressedStake;
-    emit AccountCreated(msg.value);
+    emit AccountCreated();
   }
 
   function fundAccount(uint64 _accountId) external payable {
@@ -181,14 +184,14 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   function startWithdrawAccount(uint64 _accountId) external {
     Account storage account = accounts[_accountId];
-    require(account.wallet == msg.sender);
+    require(account.wallet == msg.sender, "Only account owner can invoke account");
     account.withdrawingTimestamp = uint32(block.timestamp);
     emit AccountStartWithdraw(_accountId);
   }
 
   function withdrawAccount(uint64 _accountId, uint256 _amount) external {
     Account storage account = accounts[_accountId];
-    require(account.wallet == msg.sender);
+    require(account.wallet == msg.sender, "Only account owner can invoke account");
     uint32 timestamp = account.withdrawingTimestamp;
     require(timestamp != 0, "Withdrawal didn't start");
     require(timestamp + ACCOUNT_WITHDRAW_PERIOD <= block.timestamp, "Withdraw period didn't pass");
@@ -216,6 +219,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   */
   function createArbitratorExtraData(bytes calldata _arbitratorExtraData) external {
     arbitratorExtraDataMap[arbitratorExtraDataCount++] = _arbitratorExtraData;
+    emit ArbitratorExtraDataCreated(_arbitratorExtraData);
   }
 
   function createList(
@@ -242,6 +246,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     string calldata _ipfsUri
   ) external {
     List storage list = lists[_listId];
+    require(list.governor == msg.sender, "Only governor can update list");
     list.governor = _governor;
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
@@ -250,8 +255,8 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   function addItem(
-    uint64 _listId,
     uint64 _fromItemSlot,
+    uint64 _listId,
     uint64 _accountId,
     string calldata _ipfsUri
   ) external {
@@ -273,14 +278,14 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.removing = false;
     item.submissionTimestamp = uint32(block.timestamp);
 
-    emit ItemAdded(itemSlot, _listId, _ipfsUri);
+    emit ItemAdded(itemSlot, _listId, _accountId, _ipfsUri);
   }
 
   function startRemoveItem(uint64 _itemSlot) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
     require(account.wallet == msg.sender, "Only account owner can invoke account");
-    require(item.removingTimestamp == 0, "Item is already being removed");
+    require(!item.removing, "Item is already being removed");
     require(item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
 
     item.removingTimestamp = uint32(block.timestamp);
@@ -291,11 +296,13 @@ contract StakeCurate is IArbitrable, IEvidence {
   function cancelRemoveItem(uint64 _itemSlot) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
+    List memory list = lists[item.listId];
     require(account.wallet == msg.sender, "Only account owner can invoke account");
-    require(item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
+    require(!itemIsFree(item, list) && item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
     require(item.removing, "Item is not being removed");
     item.removingTimestamp = 0;
     item.removing = false;
+    emit ItemStopRemoval(_itemSlot);
   }
 
   function challengeItem(
@@ -444,7 +451,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       emit DisputeSuccessful(disputeSlot);
       dispute.winningParty = Party.Challenger;
       // 4b. slot is now Free
-      item.slotState = ItemSlotState.Free;
+      item.slotState = ItemSlotState.Virgin;
       // now, award the commited stake to challenger
       uint256 amount = decompress(item.commitedStake);
       // is it dangerous to send before the end of the function? please answer on audit
@@ -587,27 +594,28 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   function firstFreeItemSlot(uint64 _fromSlot) internal view returns (uint64) {
     uint64 i = _fromSlot;
-    Item memory item;
-    List memory list;
-    do {
+    Item memory item = items[i];
+    List memory list = lists[item.listId];
+    while (!itemIsFree(item, list)) {
+      i++;
       item = items[i];
       list = lists[item.listId];
-      i++;
-    } while (!itemIsFree(item, list));
+    }
     return(i);
   }
 
   function itemIsFree(Item memory _item, List memory _list) internal view returns (bool) {
-    bool notInUse = _item.slotState == ItemSlotState.Free;
-    bool removed = _item.removingTimestamp != 0 && _item.removingTimestamp + _list.removalPeriod <= block.timestamp;
+    bool notInUse = _item.slotState == ItemSlotState.Virgin;
+    bool removed = _item.removing && _item.removingTimestamp + _list.removalPeriod <= block.timestamp;
     return (notInUse || removed);
   }
 
   function itemCanBeChallenged(Item memory _item, List memory _list) internal view returns (bool) {
     bool free = itemIsFree(_item, _list);
+
     // the item must have same or more committed amount than required for list
     bool enoughCommitted = decompress(_item.commitedStake) >= decompress(_list.requiredStake);
-    return (!free && enoughCommitted);
+    return (!free && _item.slotState == ItemSlotState.Used && enoughCommitted);
   }
 
   // ----- PURE FUNCTIONS -----
