@@ -373,6 +373,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   function contribute(uint64 _disputeSlot, Party _party) public payable {
     DisputeSlot storage dispute = disputes[_disputeSlot];
     require(dispute.state == DisputeState.Used, "DisputeSlot has to be used");
+    require(uint256(_party) < 2, "Party doesn't exist");
 
     _verifyUnderAppealDeadline(dispute);
 
