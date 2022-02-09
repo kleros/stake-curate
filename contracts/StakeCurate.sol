@@ -401,9 +401,8 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     _verifyUnderAppealDeadline(dispute);
 
-    dispute.nContributions++;
     dispute.pendingWithdraws[uint256(_party)]++;
-    // compress amount, possibly losing up to 4 gwei. they will be burnt.
+    // compress amount, possibly losing up to 1/128 gwei. they will be burnt.
     uint80 amount = contribCompress(msg.value);
     uint8 nextRound = dispute.currentRound + 1;
     roundContributionsMap[_disputeSlot][nextRound].partyTotal[uint256(_party)] += amount;
@@ -532,6 +531,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       // this was last contrib remaining
       // no need to decrement pendingWithdraws if last. saves gas.
       dispute.state = DisputeState.Free;
+      emit WithdrawnContribution(_disputeSlot, _contributionSlot);
       emit FreedDisputeSlot(_disputeSlot);
     } else {
       dispute.pendingWithdraws[uint256(winningParty)]--;
