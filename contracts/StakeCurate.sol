@@ -128,6 +128,9 @@ contract StakeCurate is IArbitrable, IEvidence {
   event DisputeSuccessful(uint64 _disputeSlot);
   event DisputeFailed(uint64 _disputeSlot);
 
+  // technically this is -only- needed for calling withdrawAllContributions
+  // so I may remove calls in other functions (rule and withdrawOneContribution)
+  // it's like 750 gas called once per disputeSlot but it makes dev easier
   event FreedDisputeSlot(uint64 _disputeSlot);
 
   event Contribute(uint64 _disputeSlot, Party _party);
@@ -492,6 +495,8 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     if (dispute.pendingWithdraws[uint256(dispute.winningParty)] == 0) {
       dispute.state = DisputeState.Free;
+      emit FreedDisputeSlot(disputeSlot); // technically, subgraph doesn't need this
+      // but it makes for easier testing and subgraph mapping
     } else {
       dispute.state = DisputeState.Withdrawing;
     }
