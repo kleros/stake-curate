@@ -308,13 +308,35 @@ contract StakeCurate is IArbitrable, IEvidence {
   function challengeItem(
     uint64 _itemSlot,
     uint64 _fromDisputeSlot,
+    uint256 _minAmount,
     string calldata _reason
   ) external payable {
     Item storage item = items[_itemSlot];
     List memory list = lists[item.listId];
+    Account storage account = accounts[item.accountId];
+    
     require(itemCanBeChallenged(item, list), "Item cannot be challenged");
+    uint256 freeStake = decompress(account.fullStake) - decompress(account.lockedStake);
+    /** challenger sets a minAmount flag because of this edge case:
+     * submitter notices something's wrong with the item, he challenges himself on another item
+     * to lock part of his stake, enough such that his freeStake no longer affords the list requirement,
+     * and thus "skipping" the withdrawing phase that was designed to prevent frontrunning.
+     * not very elegant, critique accepted.
+     * probably, not even strictly required for stake curate to be successful
+     * also doesn't prevent submitter to just go and challenge himself
+     * which counts as frontrunning. no clue on how to stop that.
+     * I guess frontrunning is a game two can play.
+     * note that, in any case, the item will stop showing up as included in the subgraph.
+    */
+    require(_minAmount <= freeStake, "Not enough free stake to satisfy minAmount");
+
+    // All requirements met, begin
+    uint256 comittedAmount = decompress(list.requiredStake) <= freeStake
+      ? decompress(list.requiredStake)
+      : freeStake
+    ;
     uint64 disputeSlot = firstFreeDisputeSlot(_fromDisputeSlot);
-    // Begin. Should I require enough for the cost?
+
     bytes memory arbitratorExtraData = arbitratorExtraDataMap[list.arbitratorExtraDataId];
     uint256 arbitratorDisputeId = arbitrator.createDispute{value: msg.value}(RULING_OPTIONS, arbitratorExtraData);
     disputeIdToDisputeSlot[arbitratorDisputeId] = disputeSlot;
@@ -323,26 +345,28 @@ contract StakeCurate is IArbitrable, IEvidence {
     // should item stop being removed? this opens a (costly?) dispute spam attack that disallows removing item.
     // if you don't stop the removal, the opposite happens. submitter can make dofus disputes until making the removal period
     item.removingTimestamp = 0;
-    item.commitedStake = list.requiredStake; // in case requiredStake was lowered. o.w. remains same.
+    item.commitedStake = compress(comittedAmount);
+    account.lockedStake = compress(decompress(account.lockedStake) + comittedAmount);
 
-    DisputeSlot storage dispute = disputes[disputeSlot];
-    dispute.arbitratorDisputeId = arbitratorDisputeId;
-    dispute.itemSlot = _itemSlot;
-    dispute.challenger = msg.sender;
-    dispute.state = DisputeState.Used;
-    dispute.currentRound = 0;
+    disputes[disputeSlot] = DisputeSlot({
+      arbitratorDisputeId: arbitratorDisputeId,
+      itemSlot: _itemSlot,
+      challenger: msg.sender,
+      state: DisputeState.Used,
+      currentRound: 0,
 
-    dispute.nContributions = 0;
-    dispute.pendingWithdraws[0] = 0;
-    dispute.pendingWithdraws[1] = 0;
-    dispute.appealDeadline = 0;
-    dispute.arbitratorExtraDataId = list.arbitratorExtraDataId;
+      nContributions: 0,
+      pendingWithdraws: [uint64(0), uint64(0)],
+      appealDeadline: 0,
+      winningParty: Party.Staker, // don't worry it'll be overriden later
+      arbitratorExtraDataId: list.arbitratorExtraDataId
+    });
 
-    RoundContributions storage roundContributions = roundContributionsMap[disputeSlot][1];
-    roundContributions.filler = 1;
-    roundContributions.appealCost = 0;
-    roundContributions.partyTotal[0] = 0;
-    roundContributions.partyTotal[1] = 0;
+    roundContributionsMap[disputeSlot][1] = RoundContributions({
+      filler: 1,
+      appealCost: 0,
+      partyTotal: [uint80(0), uint80(0)]
+    });
 
     emit ItemChallenged(_itemSlot, disputeSlot);
     // ERC 1497
@@ -433,6 +457,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 disputeSlot = disputeIdToDisputeSlot[_disputeId];
     DisputeSlot storage dispute = disputes[disputeSlot];
     Item storage item = items[dispute.itemSlot];
+    Account storage account = accounts[item.accountId];
     // 2. make sure that dispute has an ongoing dispute
     require(dispute.state == DisputeState.Used, "Can only be executed if Used");
     // 3. apply ruling. what to do when refuse to arbitrate?
@@ -447,6 +472,10 @@ contract StakeCurate is IArbitrable, IEvidence {
         item.removingTimestamp = uint32(block.timestamp);
       }
       item.slotState = ItemSlotState.Used;
+      // free the locked stake
+      uint256 lockedAmount = decompress(account.lockedStake);
+      uint256 updatedLockedAmount = lockedAmount - decompress(item.commitedStake);
+      account.lockedStake = compress(updatedLockedAmount);
     } else {
       // challenger won. emit disputeslot to update the status to Withdrawing in the subgraph
       emit DisputeSuccessful(disputeSlot);
@@ -455,6 +484,9 @@ contract StakeCurate is IArbitrable, IEvidence {
       item.slotState = ItemSlotState.Free;
       // now, award the commited stake to challenger
       uint256 amount = decompress(item.commitedStake);
+      // remove amount from the account
+      account.fullStake = compress(decompress(account.fullStake) - amount);
+      account.lockedStake = compress(decompress(account.lockedStake) - amount);
       // is it dangerous to send before the end of the function? please answer on audit
       payable(dispute.challenger).send(amount);
     }
@@ -587,7 +619,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   // ----- VIEW FUNCTIONS -----
   function firstFreeDisputeSlot(uint64 _fromSlot) internal view returns (uint64) {
     uint64 i = _fromSlot;
-    while (disputes[i].state == DisputeState.Used) {
+    while (disputes[i].state != DisputeState.Free) {
       i++;
     }
     return i;
