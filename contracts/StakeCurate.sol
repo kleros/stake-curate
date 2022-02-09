@@ -130,7 +130,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   event FreedDisputeSlot(uint64 _disputeSlot);
 
-  event Contribute(uint64 _disputeSlot, uint8 _round, uint80 _amount, Party _party);
+  event Contribute(uint64 _disputeSlot, Party _party);
   event WithdrawnContribution(uint64 _disputeSlot, uint64 _contributionSlot);
 
   // ----- CONTRACT STORAGE -----
@@ -388,7 +388,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint8 contribdata = 128 + uint8(_party) * 64;
     contributions[_disputeSlot][dispute.nContributions++] =
       Contribution({round: nextRound, contribdata: contribdata, contributor: msg.sender, amount: amount});
-    emit Contribute(_disputeSlot, nextRound, amount, _party);
+    emit Contribute(_disputeSlot, _party);
   }
 
   function startNextRound(uint64 _disputeSlot) external {
