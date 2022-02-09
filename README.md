@@ -19,7 +19,7 @@ Run tests with:
 
 If you want to see gas costs, do:
 
-`REPORT_GAS=T npx hardhat test`
+`npm test:gas`
 
 Check the size of the contracts:
 

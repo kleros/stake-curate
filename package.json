@@ -12,7 +12,8 @@
     "semi": false
   },
   "scripts": {
-    "test": "TS_NODE_TRANSPILE_ONLY=1 npx hardhat test"
+    "test": "TS_NODE_TRANSPILE_ONLY=1 npx hardhat test",
+    "test:gas": "REPORT_GAS=T npm test"
   },
   "devDependencies": {
     "@nomiclabs/hardhat-ethers": "^2.0.4",
