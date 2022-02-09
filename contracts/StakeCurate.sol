@@ -459,7 +459,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       payable(dispute.challenger).send(amount);
     }
 
-    if (dispute.nContributions == 0) {
+    if (dispute.pendingWithdraws[uint256(dispute.winningParty)] == 0) {
       dispute.state = DisputeState.Free;
     } else {
       dispute.state = DisputeState.Withdrawing;
