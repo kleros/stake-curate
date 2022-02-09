@@ -1,7 +1,12 @@
-const { expect } = require("chai")
-const { ethers } = require("hardhat")
+import { use, expect } from "chai"
+import { ethers } from "hardhat"
+import { waffleChai } from "@ethereum-waffle/chai"
+import { Contract, Signer } from "ethers"
+import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers"
 
-async function deployContracts(deployer) {
+use(waffleChai)
+
+const deployContracts = async (deployer: Signer) => {
   const Arbitrator = await ethers.getContractFactory("Arbitrator", deployer)
   const arbitrator = await Arbitrator.deploy()
   await arbitrator.deployed()
@@ -19,11 +24,12 @@ async function deployContracts(deployer) {
   }
 }
 
-describe("Stake Curate", () => {
+describe("Stake Curate", async () => {
+  let deployer: SignerWithAddress, challenger: SignerWithAddress, interloper: SignerWithAddress, governor: SignerWithAddress
+  let arbitrator: Contract, stakeCurate: Contract
   before("Deploying", async () => {
-    [deployer, challenger, governor, anotherGovernor, interloper] = await ethers.getSigners()
+    [deployer, challenger, governor, interloper] = await ethers.getSigners();
     ({ arbitrator, stakeCurate } = await deployContracts(deployer))
-    requesterAddress = await requester.getAddress()
   })
 
   describe("should...", () => {
@@ -36,6 +42,9 @@ describe("Stake Curate", () => {
       const value = 100
       // can you get value/sender out of an event that doesn't emit it?
       await expect(stakeCurate.connect(deployer).createAccount(...args, { value }))
+        .to.emit(stakeCurate, "AccountCreated")
+      // get an acc for interloper too (to see the realistic account creation cost)
+      await expect(stakeCurate.connect(interloper).createAccount(...args, { value }))
         .to.emit(stakeCurate, "AccountCreated")
     })
 
@@ -134,7 +143,7 @@ describe("Stake Curate", () => {
         .withArgs(...args)
     })
 
-    it("An item added to the same slot goes to the next free slot", async () => {
+    it("An item added to a taken slot goes to the next free slot", async () => {
       const args = [0, 0, 0, "item_uri"] // fromItemSlot, listId, accountId, ipfsUri
       await expect(stakeCurate.connect(deployer).addItem(...args))
         .to.emit(stakeCurate, "ItemAdded")
@@ -208,9 +217,9 @@ describe("Stake Curate", () => {
       const args = [0, 0, "reason"] // itemSlot, disputeSlot, reason
       const value = CHALLENGE_FEE
       await expect(stakeCurate.connect(challenger).challengeItem(...args, { value }))
-        .to.emit("ItemChallenged").withArgs(...args)
-        .emit("Dispute") // how to encodePacked in js? todo
-        .emit("Evidence") // to get evidenceGroupId
+        .to.emit(stakeCurate, "ItemChallenged").withArgs(0, 0)
+        .to.emit(stakeCurate, "Dispute") // how to encodePacked in js? todo
+        .to.emit(stakeCurate, "Evidence") // to get evidenceGroupId
     })
 
     it("You cannot challenge a disputed item", async () => {
@@ -220,7 +229,7 @@ describe("Stake Curate", () => {
         .to.be.revertedWith("Item cannot be challenged")
     })
 
-    it("You cannot challenge a virgin item slot", async () => {
+    it("You cannot challenge a free item slot", async () => {
       const args = [10, 0, "reason"] // itemSlot, disputeSlot, reason
       const value = CHALLENGE_FEE
       await expect(stakeCurate.connect(challenger).challengeItem(...args, { value }))
@@ -238,12 +247,27 @@ describe("Stake Curate", () => {
         .to.be.revertedWith("Item cannot be challenged")
     })
 
-    // you cant challenge a disputed item
+    it("Dispute in a taken slot goes to next valid slot", async () => {
+      await stakeCurate.connect(deployer).addItem(1, 0, 0, "item2")
+      const args = [1, 0, "reason"] // itemSlot, disputeSlot, reason
+      const value = CHALLENGE_FEE
+      await expect(stakeCurate.connect(challenger).challengeItem(...args, { value }))
+        .to.emit(stakeCurate, "ItemChallenged").withArgs(1, 1) // itemSlot, disputeSlot
+    })
 
-    // you cant challenge a removed item
+    it("You cannot start removal of a disputed item", async () => {
+      const args = [0] // itemSlot
+      await expect(stakeCurate.connect(deployer).startRemoveItem(...args))
+        .to.be.revertedWith("ItemSlot must be Used")
+    })
 
-    // test dispute frontrunning
+    it("Submit evidence", async () => {
+      const args = [0, "evidence"]
+      await expect(stakeCurate.connect(deployer).submitEvidence(...args))
+        .to.emit(stakeCurate, "Evidence")
+        .withArgs(arbitrator.address, 0, deployer.address, "evidence")
+    })
 
-    // test that you can only request removal of an item if it's "Used" (later, when you dispute)
+    // make a dispute from a freed slot later to check cheap challenge
   })
 })
