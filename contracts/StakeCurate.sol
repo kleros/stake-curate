@@ -25,7 +25,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   enum ItemSlotState { Free, Used, Disputed }
 
   // loses up to 4 gwei, used for Contribution amounts
-  uint256 internal constant AMOUNT_BITSHIFT = 32;
+  uint256 internal constant AMOUNT_BITSHIFT = 24;
   uint256 internal constant ACCOUNT_WITHDRAW_PERIOD = 604_800; // 1 week
   uint256 internal constant RULING_OPTIONS = 2;
   
