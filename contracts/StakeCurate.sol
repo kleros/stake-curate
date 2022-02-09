@@ -22,7 +22,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used, Withdrawing }
   // Item may be free even if "Used"! Use itemIsFree view. (because of removingTimestamp)
-  enum ItemSlotState { Virgin, Used, Disputed }
+  enum ItemSlotState { Free, Used, Disputed }
 
   // loses up to 4 gwei, used for Contribution amounts
   uint256 internal constant AMOUNT_BITSHIFT = 32;
@@ -298,7 +298,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Account memory account = accounts[item.accountId];
     List memory list = lists[item.listId];
     require(account.wallet == msg.sender, "Only account owner can invoke account");
-    require(!itemIsFree(item, list) && item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
+    require(!itemIsFree(item, list), "ItemSlot must not be free"); // You can cancel removal while Disputed
     require(item.removing, "Item is not being removed");
     item.removingTimestamp = 0;
     item.removing = false;
@@ -451,7 +451,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       emit DisputeSuccessful(disputeSlot);
       dispute.winningParty = Party.Challenger;
       // 4b. slot is now Free
-      item.slotState = ItemSlotState.Virgin;
+      item.slotState = ItemSlotState.Free;
       // now, award the commited stake to challenger
       uint256 amount = decompress(item.commitedStake);
       // is it dangerous to send before the end of the function? please answer on audit
@@ -605,7 +605,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   function itemIsFree(Item memory _item, List memory _list) internal view returns (bool) {
-    bool notInUse = _item.slotState == ItemSlotState.Virgin;
+    bool notInUse = _item.slotState == ItemSlotState.Free;
     bool removed = _item.removing && _item.removingTimestamp + _list.removalPeriod <= block.timestamp;
     return (notInUse || removed);
   }
