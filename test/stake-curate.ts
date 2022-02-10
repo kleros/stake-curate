@@ -37,6 +37,9 @@ describe("Stake Curate", async () => {
     const LIST_REMOVAL_PERIOD = 60
     const CHALLENGE_FEE = 1_000_000_000 // also used for appeals
 
+    // to get realistic gas costs
+    const IPFS_URI = "/ipfs/Qme7ss3ARVgxv6rXqVPiikMJ8u2NLgmgszg13pYrDKEoiu/item.json"
+
     it("Create account", async () => {
       const args = []
       const value = 100
@@ -137,33 +140,33 @@ describe("Stake Curate", async () => {
     })
 
     it("Adds an item", async () => {
-      const args = [0, 0, 0, "item_uri"] // fromItemSlot, listId, accountId, ipfsUri
+      const args = [0, 0, 0, IPFS_URI] // fromItemSlot, listId, accountId, ipfsUri
       await expect(stakeCurate.connect(deployer).addItem(...args))
         .to.emit(stakeCurate, "ItemAdded")
         .withArgs(...args)
     })
 
     it("An item added to a taken slot goes to the next free slot", async () => {
-      const args = [0, 0, 0, "item_uri"] // fromItemSlot, listId, accountId, ipfsUri
+      const args = [0, 0, 0, IPFS_URI] // fromItemSlot, listId, accountId, ipfsUri
       await expect(stakeCurate.connect(deployer).addItem(...args))
         .to.emit(stakeCurate, "ItemAdded")
         .withArgs(1, ...args.slice(1))
     })
 
     it("Interloper cannot add an item", async () => {
-      const args = [0, 0, 0, "item_uri"] // fromItemSlot, listId, accountId, ipfsUri
+      const args = [0, 0, 0, IPFS_URI] // fromItemSlot, listId, accountId, ipfsUri
       await expect(stakeCurate.connect(interloper).addItem(...args))
         .to.be.revertedWith("Only account owner can invoke account")
     })
 
     it("Revert adding if not enough free stake", async () => {
       // governor, requiredStake, removalPeriod, arbitratorExtraDataId, ipfsUri
-      const createListArgs = [governor.address, 2000, 60, 0, "list_policy2"]
+      const createListArgs = [governor.address, 2000, 60, 0, IPFS_URI]
       await expect(stakeCurate.connect(deployer).createList(...createListArgs))
         .to.emit(stakeCurate, "ListCreated")
         .withArgs(...createListArgs)
 
-      const addItemArgs = [0, 1, 0, "item_uri"] // fromItemSlot, listId, accountId, ipfsUri
+      const addItemArgs = [0, 1, 0, IPFS_URI] // fromItemSlot, listId, accountId, ipfsUri
       await expect(stakeCurate.connect(deployer).addItem(...addItemArgs))
         .to.be.revertedWith("Not enough free stake")
     })
@@ -206,7 +209,7 @@ describe("Stake Curate", async () => {
     })
 
     it("You can add an item into a removed slot", async () => {
-      const args = [0, 0, 0, "item_uri"] // fromItemSlot, listId, accountId, ipfsUri
+      const args = [0, 0, 0, IPFS_URI] // fromItemSlot, listId, accountId, ipfsUri
       await ethers.provider.send("evm_increaseTime", [LIST_REMOVAL_PERIOD + 1])
       await expect(stakeCurate.connect(deployer).addItem(...args))
         .to.emit(stakeCurate, "ItemAdded")
@@ -214,7 +217,7 @@ describe("Stake Curate", async () => {
     })
 
     it("You can challenge an item", async () => {
-      const args = [0, 0, 0, "reason"] // itemSlot, disputeSlot, minAmount, reason
+      const args = [0, 0, 0, IPFS_URI] // itemSlot, disputeSlot, minAmount, reason
       const value = CHALLENGE_FEE
       await expect(stakeCurate.connect(challenger).challengeItem(...args, { value }))
         .to.emit(stakeCurate, "ItemChallenged").withArgs(0, 0)
@@ -223,21 +226,21 @@ describe("Stake Curate", async () => {
     })
 
     it("You cannot challenge a disputed item", async () => {
-      const args = [0, 0, 0, "reason"] // itemSlot, disputeSlot, minAmount, reason
+      const args = [0, 0, 0, IPFS_URI] // itemSlot, disputeSlot, minAmount, reason
       const value = CHALLENGE_FEE
       await expect(stakeCurate.connect(challenger).challengeItem(...args, { value }))
         .to.be.revertedWith("Item cannot be challenged")
     })
 
     it("You cannot challenge a free item slot", async () => {
-      const args = [10, 0, 0, "reason"] // itemSlot, disputeSlot, minAmount, reason
+      const args = [10, 0, 0, IPFS_URI] // itemSlot, disputeSlot, minAmount, reason
       const value = CHALLENGE_FEE
       await expect(stakeCurate.connect(challenger).challengeItem(...args, { value }))
         .to.be.revertedWith("Item cannot be challenged")
     })
 
     it("You cannot challenge a removed item", async () => {
-      const args = [1, 0, 0, "reason"] // itemSlot, disputeSlot, minAmount, reason
+      const args = [1, 0, 0, IPFS_URI] // itemSlot, disputeSlot, minAmount, reason
       const value = CHALLENGE_FEE
       await expect(stakeCurate.connect(deployer).startRemoveItem(1))
         .to.emit(stakeCurate, "ItemStartRemoval")
@@ -248,8 +251,8 @@ describe("Stake Curate", async () => {
     })
 
     it("Challenging to a taken slot goes to next valid slot", async () => {
-      await stakeCurate.connect(deployer).addItem(1, 0, 0, "item3")
-      const args = [1, 0, 0, "reason"] // itemSlot, disputeSlot, minAmount, reason
+      await stakeCurate.connect(deployer).addItem(1, 0, 0, IPFS_URI)
+      const args = [1, 0, 0, IPFS_URI] // itemSlot, disputeSlot, minAmount, reason
       const value = CHALLENGE_FEE
       await expect(stakeCurate.connect(challenger).challengeItem(...args, { value }))
         .to.emit(stakeCurate, "ItemChallenged").withArgs(1, 1) // itemSlot, disputeSlot
@@ -262,10 +265,10 @@ describe("Stake Curate", async () => {
     })
 
     it("Submit evidence", async () => {
-      const args = [0, "evidence"]
+      const args = [0, IPFS_URI]
       await expect(stakeCurate.connect(deployer).submitEvidence(...args))
         .to.emit(stakeCurate, "Evidence")
-        .withArgs(arbitrator.address, 0, deployer.address, "evidence")
+        .withArgs(arbitrator.address, 0, deployer.address, IPFS_URI)
     })
 
     it("Make a contribution", async () => {
@@ -276,6 +279,20 @@ describe("Stake Curate", async () => {
       await expect(stakeCurate.connect(deployer).contribute(...args, {value}))
         .to.emit(stakeCurate, "Contribute")
         .withArgs(...args)
+    })
+
+    it("Cannot make a contribution to an unused Dispute", async () => {
+      const args = [2, 0] // disputeSlot, party 
+      const value = 500_000_000
+      await expect(stakeCurate.connect(deployer).contribute(...args, {value}))
+        .to.be.revertedWith("DisputeSlot has to be used")
+    })
+
+    it("Cannot make a contribution for a party that doesn't exist", async () => {
+      const args = [0, 10] // disputeSlot, party 
+      const value = 500_000_000
+      await expect(stakeCurate.connect(deployer).contribute(...args, {value}))
+        .to.be.reverted
     })
 
     it("Cannot start next round without enough funds", async () => {
@@ -324,9 +341,9 @@ describe("Stake Curate", async () => {
 
       // add a new item to rechallenge it
       await stakeCurate.connect(deployer).startWithdrawAccount(0)
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, "item4")
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
       // note this dispute is in slot 2 (because 0 and 1) 
-      await stakeCurate.connect(challenger).challengeItem(0, 1, 0, "reason2", {value: CHALLENGE_FEE})
+      await stakeCurate.connect(challenger).challengeItem(0, 1, 0, IPFS_URI, {value: CHALLENGE_FEE})
       await ethers.provider.send("evm_increaseTime", [ACCOUNT_WITHDRAW_PERIOD + 1])
 
       // Now deployer has another 100 locked. If math is right he has 900 full, with 100 locked, so 800 free.
@@ -398,8 +415,8 @@ describe("Stake Curate", async () => {
 
     it("Dispute in Withdrawing doesn't count as Free dispute, won't be overwritten", async () => {
       // get a dispute to withdrawing first
-      await stakeCurate.connect(deployer).addItem(15, 0, 0, "item4")
-      await stakeCurate.connect(challenger).challengeItem(15, 0, 0, "challenge3", {value: CHALLENGE_FEE})
+      await stakeCurate.connect(deployer).addItem(15, 0, 0, IPFS_URI)
+      await stakeCurate.connect(challenger).challengeItem(15, 0, 0, IPFS_URI, {value: CHALLENGE_FEE})
       await arbitrator.connect(deployer).giveRuling(3, 2, 3_600) // disputeId, ruling, appealWindow
       await stakeCurate.connect(deployer).contribute(0, 0, {value: 3_000_000_000})
       await stakeCurate.connect(deployer).startNextRound(0)
@@ -407,11 +424,11 @@ describe("Stake Curate", async () => {
       await ethers.provider.send("evm_increaseTime", [3_600 + 1])
       await arbitrator.connect(deployer).executeRuling(3)
 
-      await expect(stakeCurate.connect(deployer).addItem(10, 0, 0, "item5"))
+      await expect(stakeCurate.connect(deployer).addItem(10, 0, 0, IPFS_URI))
         .to.emit(stakeCurate, "ItemAdded")
-        .withArgs(10, 0, 0, "item5")
+        .withArgs(10, 0, 0, IPFS_URI)
 
-      await expect(stakeCurate.connect(deployer).challengeItem(10, 0, 0, "challenge4", {value: CHALLENGE_FEE}))
+      await expect(stakeCurate.connect(deployer).challengeItem(10, 0, 0, IPFS_URI, {value: CHALLENGE_FEE}))
         .to.emit(stakeCurate, "ItemChallenged")
         .withArgs(10, 3) // because in this test 0 is taken and 1 and 2 were taken in prev tests.
     })
@@ -444,8 +461,8 @@ describe("Stake Curate", async () => {
 
     it("Rule for submitter", async () => {
       // get a dispute to withdrawing first
-      await stakeCurate.connect(deployer).addItem(20, 0, 0, "item20")
-      await stakeCurate.connect(challenger).challengeItem(20, 4, 0, "challenge5", {value: CHALLENGE_FEE})
+      await stakeCurate.connect(deployer).addItem(20, 0, 0, IPFS_URI)
+      await stakeCurate.connect(challenger).challengeItem(20, 4, 0, IPFS_URI, {value: CHALLENGE_FEE})
       await arbitrator.connect(deployer).giveRuling(5, 1, 3_600) // disputeId, ruling, appealWindow
       await ethers.provider.send("evm_increaseTime", [3_600 + 1])
 
@@ -455,9 +472,9 @@ describe("Stake Curate", async () => {
         .withArgs(arbitrator.address, 5, 1)
 
       // check if slot is overwritten (it shouldn't since item won dispute)
-      await expect(stakeCurate.connect(deployer).addItem(20, 0, 0, "item21"))
+      await expect(stakeCurate.connect(deployer).addItem(20, 0, 0, IPFS_URI))
         .to.emit(stakeCurate, "ItemAdded")
-        .withArgs(21, 0, 0, "item21")
+        .withArgs(21, 0, 0, IPFS_URI)
     })
 
     // balance from contribs from last unappealed round
