@@ -411,8 +411,12 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     // pendingWithdrawal = true, it's the first bit. party = _party is the second bit.
     uint8 contribdata = 128 + uint8(_party) * 64;
-    contributions[_disputeSlot][dispute.nContributions++] =
-      Contribution({round: nextRound, contribdata: contribdata, contributor: msg.sender, amount: amount});
+    Contribution storage contribution = contributions[_disputeSlot][dispute.nContributions++];
+    contribution.round = nextRound;
+    contribution.contribdata = contribdata;
+    contribution.contributor = msg.sender;
+    contribution.amount = amount;
+    
     emit Contribute(_disputeSlot, _party);
   }
 
