@@ -311,7 +311,7 @@ describe("Stake Curate", async () => {
       // contribute enough first.
       const contribArgs = [0, 1]
       const value = 550_000_000 // I overdo it due to lossy compression
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 5; i++) {
         await expect(stakeCurate.connect(challenger).contribute(...contribArgs, {value}))
           .to.emit(stakeCurate, "Contribute")
           .withArgs(...contribArgs)
@@ -418,7 +418,7 @@ describe("Stake Curate", async () => {
       await stakeCurate.connect(deployer).addItem(15, 0, 0, IPFS_URI)
       await stakeCurate.connect(challenger).challengeItem(15, 0, 0, IPFS_URI, {value: CHALLENGE_FEE})
       await arbitrator.connect(deployer).giveRuling(3, 2, 3_600) // disputeId, ruling, appealWindow
-      await stakeCurate.connect(deployer).contribute(0, 0, {value: 3_000_000_000})
+      await stakeCurate.connect(deployer).contribute(0, 0, {value: 4_000_000_000})
       await stakeCurate.connect(deployer).startNextRound(0)
       await arbitrator.connect(deployer).giveRuling(3, 1, 3_600) // disputeId, ruling, appealWindow
       await ethers.provider.send("evm_increaseTime", [3_600 + 1])
@@ -478,5 +478,7 @@ describe("Stake Curate", async () => {
     })
 
     // balance from contribs from last unappealed round
+    // adopting
+    // updating amount (you can't update disputed items)
   })
 })
