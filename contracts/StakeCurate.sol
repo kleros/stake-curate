@@ -29,12 +29,15 @@ contract StakeCurate is IArbitrable, IEvidence {
   uint256 internal constant ACCOUNT_WITHDRAW_PERIOD = 604_800; // 1 week
   uint256 internal constant RULING_OPTIONS = 2;
   
-  // In Slot Curate I let people set their custom multipliers,
-  // this is, the amount of extra contribution that must be done
-  // in order for an appeal to happen. There must be surplus to
-  // intentivize contributors to appeal what they think is right.
-  // Here I just hardcoded this ratio, but setting it custom is straightforward.
-  uint256 internal constant MULTIPLIER = 2;
+  /** In Slot Curate I let people set their custom multipliers,
+   * this is, the amount of extra contribution that must be done
+   * in order for an appeal to happen. There must be surplus to
+   * intentivize contributors to appeal what they think is right.
+   * Here I just hardcoded this ratio, but setting it custom is straightforward.
+   * 2 is enough to return the investment to winning party.
+   * More than 2 is needed for get any profit.
+   */
+  uint256 internal constant MULTIPLIER = 3;
 
   // Some uint256 are lossily compressed into uint32 using Cint32.sol
   struct Account {
@@ -56,7 +59,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   struct Item {
     uint64 accountId;
     uint64 listId;
-    uint32 commitedStake; // used for protection against governor changing stake amounts
+    uint32 committedStake; // used for protection against governor changing stake amounts
     uint32 removingTimestamp; // frontrunning protection
     bool removing; // on failed dispute, will automatically reset removingTimestamp
     ItemSlotState slotState;
@@ -274,7 +277,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(freeStake >= requiredStake, "Not enough free stake");
     // Item can be submitted
     item.slotState = ItemSlotState.Used;
-    item.commitedStake = compressedRequiredStake;
+    item.committedStake = compressedRequiredStake;
     item.accountId = _accountId;
     item.listId = _listId;
     item.removingTimestamp = 0;
@@ -348,7 +351,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // should item stop being removed? this opens a (costly?) dispute spam attack that disallows removing item.
     // if you don't stop the removal, the opposite happens. submitter can make dofus disputes until making the removal period
     item.removingTimestamp = 0;
-    item.commitedStake = compress(comittedAmount);
+    item.committedStake = compress(comittedAmount);
     account.lockedStake = compress(decompress(account.lockedStake) + comittedAmount);
 
     disputes[disputeSlot] = DisputeSlot({
@@ -479,7 +482,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       item.slotState = ItemSlotState.Used;
       // free the locked stake
       uint256 lockedAmount = decompress(account.lockedStake);
-      uint256 updatedLockedAmount = lockedAmount - decompress(item.commitedStake);
+      uint256 updatedLockedAmount = lockedAmount - decompress(item.committedStake);
       account.lockedStake = compress(updatedLockedAmount);
     } else {
       // challenger won. emit disputeslot to update the status to Withdrawing in the subgraph
@@ -488,7 +491,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       // 4b. slot is now Free
       item.slotState = ItemSlotState.Free;
       // now, award the commited stake to challenger
-      uint256 amount = decompress(item.commitedStake);
+      uint256 amount = decompress(item.committedStake);
       // remove amount from the account
       account.fullStake = compress(decompress(account.fullStake) - amount);
       account.lockedStake = compress(decompress(account.lockedStake) - amount);
@@ -655,7 +658,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     bool free = itemIsFree(_item, _list);
 
     // the item must have same or more committed amount than required for list
-    bool enoughCommitted = decompress(_item.commitedStake) >= decompress(_list.requiredStake);
+    bool enoughCommitted = decompress(_item.committedStake) >= decompress(_list.requiredStake);
     return (!free && _item.slotState == ItemSlotState.Used && enoughCommitted);
   }
 
