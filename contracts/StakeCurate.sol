@@ -123,6 +123,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ItemStartRemoval(uint64 _itemSlot);
   event ItemStopRemoval(uint64 _itemSlot);
   // there's no need for "ItemRemoved", since it will automatically be considered removed after the period.
+  event ItemRecommitted(uint64 _itemSlot);
 
   event ItemChallenged(uint64 _itemSlot, uint64 _disputeSlot);
 
@@ -309,6 +310,23 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.removingTimestamp = 0;
     item.removing = false;
     emit ItemStopRemoval(_itemSlot);
+  }
+
+  function recommitItem(uint64 _itemSlot) external {
+    Item storage item = items[_itemSlot];
+    Account memory account = accounts[item.accountId];
+    List memory list = lists[item.listId];
+    require(account.wallet == msg.sender, "Only account owner can invoke account");
+    require(!itemIsFree(item, list) && item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
+    require(!item.removing, "Item is being removed");
+    
+    uint256 freeStake = decompress(account.fullStake) - decompress(account.lockedStake);
+    uint256 freeStakeWithoutThis = freeStake + decompress(item.committedStake);
+    require(freeStakeWithoutThis >= decompress(list.requiredStake), "Not enough to recommit item");
+
+    item.committedStake = list.requiredStake;
+
+    emit ItemRecommitted(_itemSlot);
   }
 
   function challengeItem(
