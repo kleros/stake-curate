@@ -312,6 +312,24 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ItemStopRemoval(_itemSlot);
   }
 
+  function adoptItem(uint64 _itemSlot, uint64 _adopterId) external {
+    Item storage item = items[_itemSlot];
+    Account memory account = accounts[item.accountId];
+    Account memory adopter = accounts[_adopterId];
+    List memory list = lists[item.listId];
+
+    require(adopter.wallet == msg.sender, "Only adopter owner can adopt");
+    require(item.slotState == ItemSlotState.Used, "Item slot must be in slot Used");
+    require(itemIsInAdoption(item, list, account), "Item is not in adoption");
+    uint256 freeStake = decompress(adopter.fullStake) - decompress(adopter.lockedStake);
+    require(decompress(list.requiredStake) <= freeStake, "Cannot afford adopting this item");
+
+    item.accountId = _adopterId;
+    item.committedStake = list.requiredStake;
+    item.removing = false;
+    item.removingTimestamp = 0;
+  }
+
   function recommitItem(uint64 _itemSlot) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
@@ -717,5 +735,15 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint8 partyAddend = _contribdata & 64;
     Party party = Party(partyAddend >> 6);
     return (pendingWithdrawal, party);
+  }
+
+  function itemIsInAdoption(Item memory _item, List memory _list, Account memory _account) internal pure returns (bool) {
+    // check if any of the 4 conditions for adoption is met:
+    bool beingRemoved = _item.removing;
+    bool accountWithdrawing = _account.withdrawingTimestamp != 0;
+    bool committedUnderRequired = decompress(_item.committedStake) < decompress(_list.requiredStake);
+    uint256 freeStake = decompress(_account.fullStake) - decompress(_account.lockedStake);
+    bool notEnoughFreeStake = freeStake < decompress(_list.requiredStake);
+    return (beingRemoved || accountWithdrawing || committedUnderRequired || notEnoughFreeStake);
   }
 }
