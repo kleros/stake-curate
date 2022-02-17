@@ -124,6 +124,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ItemStopRemoval(uint64 _itemSlot);
   // there's no need for "ItemRemoved", since it will automatically be considered removed after the period.
   event ItemRecommitted(uint64 _itemSlot);
+  event ItemAdopted(uint64 _itemSlot, uint64 _adopterId);
 
   event ItemChallenged(uint64 _itemSlot, uint64 _disputeSlot);
 
@@ -328,6 +329,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.committedStake = list.requiredStake;
     item.removing = false;
     item.removingTimestamp = 0;
+
+    emit ItemAdopted(_itemSlot, _adopterId);
   }
 
   function recommitItem(uint64 _itemSlot) external {
