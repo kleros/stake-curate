@@ -339,8 +339,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(!item.removing, "Item is being removed");
     
     uint256 freeStake = decompress(account.fullStake) - decompress(account.lockedStake);
-    uint256 freeStakeWithoutThis = freeStake + decompress(item.committedStake);
-    require(freeStakeWithoutThis >= decompress(list.requiredStake), "Not enough to recommit item");
+    require(freeStake >= decompress(list.requiredStake), "Not enough to recommit item");
 
     item.committedStake = list.requiredStake;
 
