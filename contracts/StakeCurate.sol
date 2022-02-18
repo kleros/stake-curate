@@ -320,7 +320,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     List memory list = lists[item.listId];
 
     require(adopter.wallet == msg.sender, "Only adopter owner can adopt");
-    require(item.slotState == ItemSlotState.Used, "Item slot must be in slot Used");
+    require(item.slotState == ItemSlotState.Used, "Item slot must be Used");
     require(itemIsInAdoption(item, list, account), "Item is not in adoption");
     uint256 freeStake = decompress(adopter.fullStake) - decompress(adopter.lockedStake);
     require(decompress(list.requiredStake) <= freeStake, "Cannot afford adopting this item");
