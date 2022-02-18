@@ -19,7 +19,7 @@ Run tests with:
 
 If you want to see gas costs, do:
 
-`npm test:gas`
+`npm run test:gas`
 
 Check the size of the contracts:
 
