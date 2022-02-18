@@ -255,13 +255,15 @@ describe("Stake Curate", async () => {
     it("You cannot challenge when committedStake < requiredStake", async () => {
       await stakeCurate.connect(deployer).addItem(150, 0, 0, IPFS_URI)
       await stakeCurate.connect(governor).updateList(0, governor.address, 200, LIST_REMOVAL_PERIOD, 0, "list_policy")
-      await expect(stakeCurate.connect(challenger).challengeItem(150, 100, 0, "list_policy"))
+      await expect(stakeCurate.connect(challenger).challengeItem(150, 100, 0, "list_policy", {value: CHALLENGE_FEE}))
         .to.be.revertedWith("Item cannot be challenged")
+      // return list requiredStake back to 100 to avoid regression in the tests
+      await stakeCurate.connect(governor).updateList(0, governor.address, 100, LIST_REMOVAL_PERIOD, 0, "list_policy")
     })
 
     it("Challenge reverts if minAmount is over freeStake", async () => {
       await stakeCurate.connect(deployer).addItem(151, 0, 0, IPFS_URI)
-      await expect(stakeCurate.connect(challenger).challengeItem(150, 100, 200, "list_policy"))
+      await expect(stakeCurate.connect(challenger).challengeItem(151, 100, 2000, "list_policy", {value: CHALLENGE_FEE}))
         .to.be.revertedWith("Not enough free stake to satisfy minAmount")
     })
 
