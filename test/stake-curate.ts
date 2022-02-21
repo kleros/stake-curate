@@ -3,7 +3,6 @@ import { ethers } from "hardhat"
 import { waffleChai } from "@ethereum-waffle/chai"
 import { Contract, Signer } from "ethers"
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers"
-import { connect } from "http2"
 
 use(waffleChai)
 
@@ -274,10 +273,6 @@ describe("Stake Curate", async () => {
       await expect(stakeCurate.connect(challenger).challengeItem(...args, { value }))
         .to.emit(stakeCurate, "ItemChallenged").withArgs(1, 1) // itemSlot, disputeSlot
     })
-
-
-
-
 
     it("You cannot start removal of a disputed item", async () => {
       const args = [0] // itemSlot
@@ -598,6 +593,26 @@ describe("Stake Curate", async () => {
 
     // balance from contribs from last unappealed round
 
-    // unsuccessful dispute on removing item makes item renew removalTimestamp
+    it("Unsuccessful dispute on removing item makes item renew removalTimestamp", async () => {
+      await stakeCurate.connect(deployer).addItem(200, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).startRemoveItem(200)
+      await ethers.provider.send("evm_increaseTime", [LIST_REMOVAL_PERIOD/2])
+      await stakeCurate.connect(challenger).challengeItem(200, 200, 0, IPFS_URI, {value: CHALLENGE_FEE}) // disputeId = 7
+      await arbitrator.connect(deployer).giveRuling(7, 1, 3_600) // disputeId, ruling, appealWindow
+      await ethers.provider.send("evm_increaseTime", [3_600 + 1])
+      await expect(arbitrator.connect(deployer).executeRuling(7))
+        .to.emit(stakeCurate, "DisputeFailed")
+        .withArgs(200)
+      // shouldn't been removed yet (since it reset), so adding gets into the next available slot
+      await ethers.provider.send("evm_increaseTime", [LIST_REMOVAL_PERIOD/2 + 1])
+      await expect(stakeCurate.connect(deployer).addItem(200, 0, 0, IPFS_URI))
+        .to.emit(stakeCurate, "ItemAdded")
+        .withArgs(201, 0, 0, IPFS_URI)
+      // should've been removed, so adding gets there
+      await ethers.provider.send("evm_increaseTime", [LIST_REMOVAL_PERIOD/2 + 1])
+      await expect(stakeCurate.connect(deployer).addItem(200, 0, 0, IPFS_URI))
+        .to.emit(stakeCurate, "ItemAdded")
+        .withArgs(200, 0, 0, IPFS_URI)
+    })
   })
 })
