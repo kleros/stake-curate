@@ -36,6 +36,9 @@ contract StakeCurate is IArbitrable, IEvidence {
    * Here I just hardcoded this ratio, but setting it custom is straightforward.
    * 2 is enough to return the investment to winning party.
    * More than 2 is needed for get any profit.
+   * EDIT: After some deliberation,
+   * Maybe 4 or even 5 is needed to incentivize contributions towards
+   * "obvious sides".
    */
   uint256 internal constant MULTIPLIER = 3;
 
@@ -481,7 +484,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     // All clear, let's appeal
     arbitrator.appeal{value: appealCost}(dispute.arbitratorDisputeId, arbitratorExtraData);
     // Record the cost for sharing the spoils later
-    roundContributionsMap[_disputeSlot][nextRound].appealCost = contribCompress(appealCost);
+    // Make it cost 2**24 wei extra. This is to prevent an attacker draining funds.
+    // Otherwise, they could make low cost disputes whose compressed appealCost is under the
+    // implied cost, and drain < 2**24 amounts.
+    roundContributionsMap[_disputeSlot][nextRound].appealCost = contribCompress(appealCost) + 1;
 
     dispute.currentRound++;
 
