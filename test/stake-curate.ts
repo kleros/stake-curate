@@ -105,9 +105,17 @@ describe("Stake Curate", async () => {
 
     it("Withdraws funds", async () => {
       const args = [0, 100] // accountId = 0, amount = 100
-      await expect(stakeCurate.connect(deployer).withdrawAccount(...args))
+      await expect(await stakeCurate.connect(deployer).withdrawAccount(...args))
         .to.emit(stakeCurate, "AccountWithdrawn")
         .withArgs(...args)
+        .to.changeEtherBalance(deployer, 100)
+    })
+
+    it("Withdrawal timestamp resets after successful withdrawal", async () => {
+      const args = [0, 100] // accountId = 0, amount = 100
+
+      await expect(stakeCurate.connect(deployer).withdrawAccount(...args))
+        .to.be.revertedWith("Withdrawal didn't start")
     })
 
     it("Create arbitratorExtraData", async () => {
@@ -220,10 +228,11 @@ describe("Stake Curate", async () => {
     it("You can challenge an item", async () => {
       const args = [0, 0, 0, IPFS_URI] // itemSlot, disputeSlot, minAmount, reason
       const value = CHALLENGE_FEE
-      await expect(stakeCurate.connect(challenger).challengeItem(...args, { value }))
+      await expect(await stakeCurate.connect(challenger).challengeItem(...args, { value }))
         .to.emit(stakeCurate, "ItemChallenged").withArgs(0, 0)
         .to.emit(stakeCurate, "Dispute") // how to encodePacked in js? todo
         .to.emit(stakeCurate, "Evidence") // to get evidenceGroupId
+        .to.changeEtherBalance(challenger, -value)
     })
 
     it("You cannot challenge a disputed item", async () => {
@@ -292,9 +301,10 @@ describe("Stake Curate", async () => {
       await arbitrator.connect(deployer).giveRuling(0, 2, 3_600) // disputeId, ruling, appealWindow
       const args = [0, 0] // disputeSlot, party 
       const value = 500_000_000
-      await expect(stakeCurate.connect(deployer).contribute(...args, {value}))
+      await expect(await stakeCurate.connect(deployer).contribute(...args, {value}))
         .to.emit(stakeCurate, "Contribute")
         .withArgs(...args)
+        .to.changeEtherBalance(deployer, -value)
     })
 
     it("Cannot make a contribution to an unused Dispute", async () => {
@@ -337,6 +347,10 @@ describe("Stake Curate", async () => {
       await expect(stakeCurate.connect(deployer).startNextRound(...args))
         .to.emit(stakeCurate, "NextRound")
         .withArgs(...args)
+
+      // just to test contribs for unappealed rounds later
+      await stakeCurate.connect(challenger).contribute(0, 0, {value})
+      await stakeCurate.connect(challenger).contribute(0, 1, {value})
     })
 
     it("Rule for challenger", async () => {
@@ -377,10 +391,34 @@ describe("Stake Curate", async () => {
     it("Withdraw one contribution", async () => {
       const args = [0, 1] // disputeSlot, contribSlot
 
-      await expect(stakeCurate.connect(deployer).withdrawOneContribution(...args))
+      // Let's figure out expected value:
+      // Submitter side: 500_000_000. After compression, stores a 29.
+      // Challenger side: 550_000_000, after compression stores a 32. (done 5 times)
+      // 29 + 32 * 5 = 189
+      // appealCost is 60. (because 1_000_000_000 >> 24 + 1)
+      // spoils are 189 - 60 = 129
+
+      // spoils are decompressed
+      // 129 << 24 = 2_164_260_864
+
+      // share is:
+      // spoils * part / total_side
+      // 2_164_260_864 * 32 / 160 -> 432852172
+
+      // "Wait but he put 550_000_000 and he got less in return!"
+      // yeah that's because:
+      // challenger side was overfunded (they put 83% of funds)
+      // 33% of the total went to pay appeal fees, so there wasn't enough
+      // 83%/3 > 17%, so both sides lost money.
+      // from submitter side to cover it.
+      // also some loses from compression (at this small amounts, it's noticeable)
+      // maybe... a way to cover this would be to increase the surplus factor.
+      // that'd make it more worthwhile for contributors to fund "obvious" sides
+
+      await expect(await stakeCurate.connect(deployer).withdrawOneContribution(...args))
         .to.emit(stakeCurate, "WithdrawnContribution")
         .withArgs(...args)
-      // test the ether balance changes? todo
+        .to.changeEtherBalance(challenger, 432_852_172)
     })
 
     it("Cannot withdraw from losing side", async () => {
@@ -411,13 +449,30 @@ describe("Stake Curate", async () => {
         .to.be.revertedWith("Contribution withdrawn already")
     })
 
+    it("Withdrawing from last unappealed round reimburses contribution", async () => {
+      // was 550_000_000, so it's same without dust
+
+      // submitter side (losing)
+      await expect(await stakeCurate.connect(deployer).withdrawOneContribution(0, 6))
+        .to.emit(stakeCurate, "WithdrawnContribution")
+        .to.changeEtherBalance(challenger, 550_000_000 >> 24 << 24)
+      
+      // challenger side (winning)
+      await expect(await stakeCurate.connect(deployer).withdrawOneContribution(0, 7))
+        .to.emit(stakeCurate, "WithdrawnContribution")
+        .to.changeEtherBalance(challenger, 550_000_000 >> 24 << 24)
+    })
+
     it("Withdrawing all contributions frees the disputeSlot", async () => {
       const args = [0] // disputeSlot
 
-      await expect(stakeCurate.connect(deployer).withdrawAllContributions(...args))
+      // checkout calculations above
+      // this should be 432_852_172 * 4
+
+      await expect(await stakeCurate.connect(deployer).withdrawAllContributions(...args))
         .to.emit(stakeCurate, "FreedDisputeSlot")
         .withArgs(...args)
-        // test balances? todo
+        .to.changeEtherBalance(challenger, 432_852_172 * 4)
     })
 
     it("Cannot withdraw all contributions from non-withdrawing disputeSlot", async () => {
