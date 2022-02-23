@@ -479,10 +479,6 @@ describe("Stake Curate", async () => {
       // checkout calculations above
       // this should be 434_178_764 * 4
 
-      // todo I'm getting "function call failed to execute" errors
-      // unnerving, I don't know what's wrong with it at all
-      // https://hardhat.org/tutorial/debugging-with-hardhat-network.html#solidity-console-log
-
       await expect(await stakeCurate.connect(deployer).withdrawAllContributions(...args))
         .to.emit(stakeCurate, "FreedDisputeSlot")
         .withArgs(...args)
@@ -659,8 +655,6 @@ describe("Stake Curate", async () => {
     await expect(stakeCurate.connect(adopter).adoptItem(30, 3))
       .to.be.revertedWith("Item slot must be Used")
     })
-
-    // balance from contribs from last unappealed round
 
     it("Unsuccessful dispute on removing item makes item renew removalTimestamp", async () => {
       await stakeCurate.connect(deployer).addItem(200, 0, 0, IPFS_URI)
