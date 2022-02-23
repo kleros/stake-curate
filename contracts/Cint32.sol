@@ -14,7 +14,7 @@ pragma solidity ^0.8.11;
  * @author Green
  * @dev Lossy compression library for turning uint256 into uint32
  */
-contract Cint32 {
+library Cint32 {
 
   function compress(uint256 _amount) internal pure returns (uint32) {
     // maybe binary search to find ndigits? there should be a better way
