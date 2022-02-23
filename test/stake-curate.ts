@@ -395,30 +395,40 @@ describe("Stake Curate", async () => {
       // Submitter side: 500_000_000. After compression, stores a 29.
       // Challenger side: 550_000_000, after compression stores a 32. (done 5 times)
       // 29 + 32 * 5 = 189
-      // appealCost is 60. (because 1_000_000_000 >> 24 + 1)
-      // spoils are 189 - 60 = 129
 
-      // spoils are decompressed
-      // 129 << 24 = 2_164_260_864
+      // appeal cost is 0b111011100110101100101000000000
+      // shiftAmount = 30 - 24 = 6
+      // significantPart = 0b111011100110101100101000
+      // shiftedShift = 6 << 24 = 0b110000000000000000000000000
+      // gets compressed to: (6, 15625000) = 116288296
+
+      // appealCost decompressed is:
+      // shift = 116288296 >> 24 = 6
+      // significantPart = 116288296 & 16_777_215 = 15625000
+      // 15625000 << 6 = 1_000_000_000  ....(no information loss, in this case)
+
+      // totals are 189 << 24 => 3_170_893_824
+      // spoils are 3_170_893_824 - 1_000_000_000 = 2_170_893_824
 
       // share is:
       // spoils * part / total_side
-      // 2_164_260_864 * 32 / 160 -> 432852172
+      // 2_170_893_824 * 32 / 160 -> 434_178_764
 
-      // "Wait but he put 550_000_000 and he got less in return!"
-      // yeah that's because:
-      // challenger side was overfunded (they put 83% of funds)
-      // 33% of the total went to pay appeal fees, so there wasn't enough
-      // 83%/3 > 17%, so both sides lost money.
-      // from submitter side to cover it.
-      // also some loses from compression (at this small amounts, it's noticeable)
-      // maybe... a way to cover this would be to increase the surplus factor.
-      // that'd make it more worthwhile for contributors to fund "obvious" sides
+      /** "Wait but he put 550_000_000 and he got less in return!"
+       * yeah that's because:
+       * challenger side was overfunded (they put 83% of funds)
+       * 33% of the total went to pay appeal fees, so there wasn't enough
+       * 83%/3 > 17%, so both sides lost money.
+       * from submitter side to cover it.
+       * also some loses from compression (at this small amounts, it's noticeable)
+       * maybe... a way to cover this would be to increase the surplus factor.
+       * that'd make it more worthwhile for contributors to fund "obvious" sides
+      */
 
       await expect(await stakeCurate.connect(deployer).withdrawOneContribution(...args))
         .to.emit(stakeCurate, "WithdrawnContribution")
         .withArgs(...args)
-        .to.changeEtherBalance(challenger, 432_852_172)
+        .to.changeEtherBalance(challenger, 434_178_764)
     })
 
     it("Cannot withdraw from losing side", async () => {
@@ -467,12 +477,16 @@ describe("Stake Curate", async () => {
       const args = [0] // disputeSlot
 
       // checkout calculations above
-      // this should be 432_852_172 * 4
+      // this should be 434_178_764 * 4
+
+      // todo I'm getting "function call failed to execute" errors
+      // unnerving, I don't know what's wrong with it at all
+      // https://hardhat.org/tutorial/debugging-with-hardhat-network.html#solidity-console-log
 
       await expect(await stakeCurate.connect(deployer).withdrawAllContributions(...args))
         .to.emit(stakeCurate, "FreedDisputeSlot")
         .withArgs(...args)
-        .to.changeEtherBalance(challenger, 432_852_172 * 4)
+        .to.changeEtherBalance(challenger, 434_178_764 * 4)
     })
 
     it("Cannot withdraw all contributions from non-withdrawing disputeSlot", async () => {
