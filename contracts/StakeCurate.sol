@@ -95,8 +95,9 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   struct RoundContributions {
     uint80[2] partyTotal; // partyTotal[Party]
-    uint80 appealCost;
-    uint16 filler; // to make sure the storage slot never goes back to zero, set it to 1 on discovery.
+    uint32 appealCost; // compressed with cint32 format instead
+    // this appealCost is always init to "1" to disallow the storage slot getting to zero
+    uint64 contribCount; // used for unappealed rounds withdrawal
   }
 
   /**
@@ -410,8 +411,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     });
 
     roundContributionsMap[disputeSlot][1] = RoundContributions({
-      filler: 1,
-      appealCost: 0,
+      contribCount: 0,
+      appealCost: 1, // never let the slot go to zero
       partyTotal: [uint80(0), uint80(0)]
     });
 
@@ -451,7 +452,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     // compress amount, possibly losing up to 1/128 gwei. they will be burnt.
     uint80 amount = contribCompress(msg.value);
     uint8 nextRound = dispute.currentRound + 1;
-    roundContributionsMap[_disputeSlot][nextRound].partyTotal[uint256(_party)] += amount;
+    RoundContributions storage roundContributions = roundContributionsMap[_disputeSlot][nextRound];
+    roundContributions.partyTotal[uint256(_party)] += amount;
+    roundContributions.contribCount++;
 
     // pendingWithdrawal = true, it's the first bit. party = _party is the second bit.
     uint8 contribdata = 128 + uint8(_party) * 64;
@@ -484,18 +487,17 @@ contract StakeCurate is IArbitrable, IEvidence {
     // All clear, let's appeal
     arbitrator.appeal{value: appealCost}(dispute.arbitratorDisputeId, arbitratorExtraData);
     // Record the cost for sharing the spoils later
-    // Make it cost 2**24 wei extra. This is to prevent an attacker draining funds.
-    // Otherwise, they could make low cost disputes whose compressed appealCost is under the
-    // implied cost, and drain < 2**24 amounts.
-    roundContributionsMap[_disputeSlot][nextRound].appealCost = contribCompress(appealCost) + 1;
+    // Potential hazard due to the cint32 compression
+    // should be rounded up, to avoid slow drain attacks (they may get <1/2**24 of the appealCost)
+    roundContributionsMap[_disputeSlot][nextRound].appealCost = compress(appealCost);
 
     dispute.currentRound++;
 
     RoundContributions storage roundContributions = roundContributionsMap[_disputeSlot][nextRound + 1];
-    roundContributions.appealCost = 0;
+    roundContributions.appealCost = 1; // never let the slot go to zero
     roundContributions.partyTotal[0] = 0;
     roundContributions.partyTotal[1] = 0;
-    roundContributions.filler = 1; // to avoid getting whole storage slot to 0.
+    roundContributions.contribCount = 0;
 
     emit NextRound(_disputeSlot);
   }
@@ -568,31 +570,37 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     RoundContributions memory roundContributions = roundContributionsMap[_disputeSlot][contribution.round];
     Party winningParty = dispute.winningParty;
-
-    if (roundContributions.appealCost != 0) {
+    // Contrib "round" starts at 1, while dispute starts at 0.
+    if (contribution.round != dispute.currentRound + 1) {
       // then this is a contribution from an appealed round.
       // only winner party can withdraw.
       require(party == winningParty, "That side lost the dispute");
+      dispute.pendingWithdraws[uint256(winningParty)]--;
+      contribution.contribdata = 0;
       _withdrawSingleReward(contribution, roundContributions, party);
     } else {
       // this is a contrib from a round that didnt get appealed.
       // just refund the same amount
       uint256 refund = contribDecompress(contribution.amount);
+      roundContributionsMap[_disputeSlot][contribution.round].contribCount--;
+      if (winningParty == party) dispute.pendingWithdraws[uint256(winningParty)]--;
+      contribution.contribdata = 0;
       // is it safe to send here?
       payable(contribution.contributor).send(refund);
     }
 
-    if (dispute.pendingWithdraws[uint256(winningParty)] == 1) {
+    if (dispute.pendingWithdraws[uint256(winningParty)] == 0
+        && roundContributionsMap[_disputeSlot][dispute.currentRound + 1].contribCount == 0
+    ) {
       // this was last contrib remaining
       // no need to decrement pendingWithdraws if last. saves gas.
+      // EDIT: for now I'm ignoring this potential gas save because it makes logic simpler
       dispute.state = DisputeState.Free;
       emit WithdrawnContribution(_disputeSlot, _contributionSlot);
       emit FreedDisputeSlot(_disputeSlot);
     } else {
-      dispute.pendingWithdraws[uint256(winningParty)]--;
       // set contribution as withdrawn. party doesn't matter, so it's chosen as Party.Requester
       // (pendingWithdrawal = false, party = Party.Requester) => paramsToContribution(false, Party.Requester) = 0
-      contribution.contribdata = 0;
       emit WithdrawnContribution(_disputeSlot, _contributionSlot);
     }
   }
@@ -634,7 +642,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       // refund every transaction
       Contribution memory contribution = contributions[_disputeSlot][contribSlot];
       uint256 refund = contribDecompress(contribution.amount);
-      payable(contribution.contributor).transfer(refund);
+      payable(contribution.contributor).send(refund);
       contribSlot++;
     }
     // afterwards, set the dispute slot Free.
@@ -660,8 +668,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint256 spoils = contribDecompress(
       _roundContributions.partyTotal[0]
       + _roundContributions.partyTotal[1]
-      - _roundContributions.appealCost
-    );
+    ) - decompress(_roundContributions.appealCost);
     uint256 share = (spoils * uint256(_contribution.amount)) / uint256(_roundContributions.partyTotal[uint256(_winningParty)]);
     // should use transfer instead? if transfer fails, then disputeSlot will stay in DisputeState.Withdrawing
     // if a transaction reverts due to not enough gas, does the send() ether remain sent? if that's so,
