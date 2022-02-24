@@ -337,7 +337,7 @@ describe("Stake Curate", async () => {
       // contribute enough first.
       const contribArgs = [0, 1]
       const value = 550_000_000 // I overdo it due to lossy compression
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 7; i++) {
         await expect(stakeCurate.connect(challenger).contribute(...contribArgs, {value}))
           .to.emit(stakeCurate, "Contribute")
           .withArgs(...contribArgs)
@@ -393,8 +393,8 @@ describe("Stake Curate", async () => {
 
       // Let's figure out expected value:
       // Submitter side: 500_000_000. After compression, stores a 29.
-      // Challenger side: 550_000_000, after compression stores a 32. (done 5 times)
-      // 29 + 32 * 5 = 189
+      // Challenger side: 550_000_000, after compression stores a 32. (done 7 times)
+      // 29 + 32 * 7 = 253
 
       // appeal cost is 0b111011100110101100101000000000
       // shiftAmount = 30 - 24 = 6
@@ -407,12 +407,12 @@ describe("Stake Curate", async () => {
       // significantPart = 116288296 & 16_777_215 = 15625000
       // 15625000 << 6 = 1_000_000_000  ....(no information loss, in this case)
 
-      // totals are 189 << 24 => 3_170_893_824
-      // spoils are 3_170_893_824 - 1_000_000_000 = 2_170_893_824
+      // totals are 253 << 24 => 4_244_635_648
+      // spoils are 4_244_635_648 - 1_000_000_000 = 3_244_635_648
 
       // share is:
       // spoils * part / total_side
-      // 2_170_893_824 * 32 / 160 -> 434_178_764
+      // 3_244_635_648 * 32 / 224 -> 463_519_378
 
       /** "Wait but he put 550_000_000 and he got less in return!"
        * yeah that's because:
@@ -428,7 +428,7 @@ describe("Stake Curate", async () => {
       await expect(await stakeCurate.connect(deployer).withdrawOneContribution(...args))
         .to.emit(stakeCurate, "WithdrawnContribution")
         .withArgs(...args)
-        .to.changeEtherBalance(challenger, 434_178_764)
+        .to.changeEtherBalance(challenger, 463_519_378)
     })
 
     it("Cannot withdraw from losing side", async () => {
@@ -463,12 +463,12 @@ describe("Stake Curate", async () => {
       // was 550_000_000, so it's same without dust
 
       // submitter side (losing)
-      await expect(await stakeCurate.connect(deployer).withdrawOneContribution(0, 6))
+      await expect(await stakeCurate.connect(deployer).withdrawOneContribution(0, 8))
         .to.emit(stakeCurate, "WithdrawnContribution")
         .to.changeEtherBalance(challenger, 550_000_000 >> 24 << 24)
       
       // challenger side (winning)
-      await expect(await stakeCurate.connect(deployer).withdrawOneContribution(0, 7))
+      await expect(await stakeCurate.connect(deployer).withdrawOneContribution(0, 9))
         .to.emit(stakeCurate, "WithdrawnContribution")
         .to.changeEtherBalance(challenger, 550_000_000 >> 24 << 24)
     })
@@ -477,12 +477,12 @@ describe("Stake Curate", async () => {
       const args = [0] // disputeSlot
 
       // checkout calculations above
-      // this should be 434_178_764 * 4
+      // this should be 463_519_378 * 6
 
       await expect(await stakeCurate.connect(deployer).withdrawAllContributions(...args))
         .to.emit(stakeCurate, "FreedDisputeSlot")
         .withArgs(...args)
-        .to.changeEtherBalance(challenger, 434_178_764 * 4)
+        .to.changeEtherBalance(challenger, 463_519_378 * 6)
     })
 
     it("Cannot withdraw all contributions from non-withdrawing disputeSlot", async () => {
@@ -499,7 +499,7 @@ describe("Stake Curate", async () => {
       await stakeCurate.connect(deployer).addItem(15, 0, 0, IPFS_URI)
       await stakeCurate.connect(challenger).challengeItem(15, 0, 0, IPFS_URI, {value: CHALLENGE_FEE})
       await arbitrator.connect(deployer).giveRuling(3, 2, 3_600) // disputeId, ruling, appealWindow
-      await stakeCurate.connect(deployer).contribute(0, 0, {value: 4_000_000_000})
+      await stakeCurate.connect(deployer).contribute(0, 0, {value: 5_000_000_000})
       await stakeCurate.connect(deployer).startNextRound(0)
       await arbitrator.connect(deployer).giveRuling(3, 1, 3_600) // disputeId, ruling, appealWindow
       await ethers.provider.send("evm_increaseTime", [3_600 + 1])
