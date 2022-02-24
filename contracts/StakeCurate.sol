@@ -40,7 +40,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * Maybe 4 or even 5 is needed to incentivize contributions towards
    * "obvious sides".
    */
-  uint256 internal constant MULTIPLIER = 3;
+  uint256 internal constant SURPLUS_FACTOR = 4;
 
   // Some uint256 are lossily compressed into uint32 using Cint32.sol
   struct Account {
@@ -455,7 +455,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     RoundContributions storage roundContributions = roundContributionsMap[_disputeSlot][nextRound];
     roundContributions.partyTotal[uint256(_party)] += amount;
     roundContributions.contribCount++;
-
     // pendingWithdrawal = true, it's the first bit. party = _party is the second bit.
     uint8 contribdata = 128 + uint8(_party) * 64;
     Contribution storage contribution = contributions[_disputeSlot][dispute.nContributions++];
@@ -477,7 +476,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     _verifyUnderAppealDeadline(dispute);
     bytes memory arbitratorExtraData = arbitratorExtraDataMap[list.arbitratorExtraDataId];
     uint256 appealCost = arbitrator.appealCost(dispute.arbitratorDisputeId, arbitratorExtraData);
-    uint256 totalAmountNeeded = (appealCost * MULTIPLIER);
+    uint256 totalAmountNeeded = (appealCost * SURPLUS_FACTOR);
 
     uint256 currentAmount = contribDecompress(
       roundContributionsMap[_disputeSlot][nextRound].partyTotal[0]
@@ -571,7 +570,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     RoundContributions memory roundContributions = roundContributionsMap[_disputeSlot][contribution.round];
     Party winningParty = dispute.winningParty;
     // Contrib "round" starts at 1, while dispute starts at 0.
-    if (contribution.round != dispute.currentRound + 1) {
+    if (contribution.round != dispute.currentRound + 1) {      
       // then this is a contribution from an appealed round.
       // only winner party can withdraw.
       require(party == winningParty, "That side lost the dispute");
