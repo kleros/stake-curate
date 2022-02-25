@@ -15,34 +15,31 @@ import "@kleros/erc-792/contracts/erc-1497/IEvidence.sol";
 /**
  * @title Stake Curate
  * @author Green
- * @dev Curate with indefinitely held, capital-efficient stake.
+ * @notice Curate with indefinitely held, capital-efficient stake.
+ * @dev The stakes of the items are handled here, but the items aren't stored here.
+ * This dapp should be reviewed taking the subgraph role into account.
  */
 contract StakeCurate is IArbitrable, IEvidence {
 
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used, Withdrawing }
-  // Item may be free even if "Used"! Use itemIsFree view. (because of removingTimestamp)
+  /// @dev Item may be free even if "Used"! Use itemIsFree view. (because of removingTimestamp)
   enum ItemSlotState { Free, Used, Disputed }
 
-  // loses up to 1/128 gwei, used for Contribution amounts
+  /// @dev loses up to 1/128 gwei, used for Contribution amounts
   uint256 internal constant AMOUNT_BITSHIFT = 24;
   uint256 internal constant ACCOUNT_WITHDRAW_PERIOD = 604_800; // 1 week
   uint256 internal constant RULING_OPTIONS = 2;
   
-  /** In Slot Curate I let people set their custom multipliers,
-   * this is, the amount of extra contribution that must be done
-   * in order for an appeal to happen. There must be surplus to
-   * intentivize contributors to appeal what they think is right.
-   * Here I just hardcoded this ratio, but setting it custom is straightforward.
-   * 2 is enough to return the investment to winning party.
-   * More than 2 is needed for get any profit.
-   * EDIT: After some deliberation,
-   * Maybe 4 or even 5 is needed to incentivize contributions towards
-   * "obvious sides".
+  /**
+   * @dev Amount of times the appeal cost must be contributed to advance to next round
+   * With it being 4, it means there are economical incentives to contribute to a side
+   * if the other side has received >20% of the total in contributions.
+   * Stake Curate uses a prediction market to contribute, unlike previous versions of Curate.
    */
   uint256 internal constant SURPLUS_FACTOR = 4;
 
-  // Some uint256 are lossily compressed into uint32 using Cint32.sol
+  /// @dev Some uint256 are lossily compressed into uint32 using Cint32.sol
   struct Account {
     address wallet;
     uint32 fullStake;
@@ -56,7 +53,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 requiredStake;
     uint32 removalPeriod;
     uint32 arbitratorExtraDataId; // arbitratorExtraData cant mutate (because of risks during dispute)
-    // we can discuss to use uint64 instead, if uint32 was too vulnerable to spam attack
+    // review we can discuss to use uint64 instead, if uint32 was too vulnerable to spam attack
   }
 
   struct Item {
@@ -100,16 +97,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 contribCount; // used for unappealed rounds withdrawal
   }
 
-  /**
-    * Unlike Slot Curate, I'm just going to concern myself with
-    * it being easy to develop. No shenanigans like compressing Event params,
-    * or validating input in the subgraph. I rather have it "clean".
-    * The two slot-related functions that can have their slots frontrun, both have
-    * forcibly the frontrun protection on, to keep it DRY.
-
-    * Have events for all possible interactions, and enough info in the events so that
-    * subgraph can figure everything out. e.g. think ahead, like for L2s
-   */
+  // ----- EVENTS -----
 
   event AccountCreated();
   event AccountFunded(uint64 _accountId, uint256 _fullStake);
@@ -154,20 +142,26 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   uint64 internal listCount;
   uint64 internal accountCount;
+  /// @dev Using 32 bits to index arbitratorExtraDatas is susceptible to overflow spam
+  /// Either increase bits or limit creating arbitratorExtraDatas to governor
+  /// Increasing to 48 bits looks doable without much refactoring and keeping structs fit.
   uint32 internal arbitratorExtraDataCount;
 
   mapping(uint64 => Account) internal accounts;
   mapping(uint64 => List) internal lists;
   mapping(uint64 => Item) internal items;
   mapping(uint64 => DisputeSlot) internal disputes;
-  mapping(uint64 => mapping(uint64 => Contribution)) internal contributions; // contributions[disputeSlot][n]
+  // contributions[disputeSlot][n]
+  mapping(uint64 => mapping(uint64 => Contribution)) internal contributions;
   // roundContributionsMap[disputeSlot][round]
   mapping(uint64 => mapping(uint8 => RoundContributions)) internal roundContributionsMap;
-  mapping(uint256 => uint64) internal disputeIdToDisputeSlot; // disputeIdToDisputeSlot[disputeId]
+  mapping(uint256 => uint64) internal disputeIdToDisputeSlot;
   mapping(uint32 => bytes) internal arbitratorExtraDataMap;
 
   /** @dev Constructs the StakeCurate contract.
    *  @param _arbitrator The address of the arbitrator.
+   *  @param _metaEvidence The IPFS uri of the metaEvidence to be used for a
+   *  Please review this if you think using the same _metaEvidence for all disputes is not feasible.
    */
   constructor(
     address _arbitrator,
@@ -179,14 +173,18 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // ----- PUBLIC FUNCTIONS -----
 
+  /// @dev Creates an account and starts it with funds dependent on value
   function createAccount() external payable {
     Account storage account = accounts[accountCount++];
-    uint32 compressedStake = compress(msg.value);
     account.wallet = msg.sender;
-    account.fullStake = compressedStake;
+    account.fullStake = compress(msg.value);
     emit AccountCreated();
   }
 
+  /**
+   * @dev Funds an existing account.
+   * @param _accountId The id of the account to fund. Doesn't have to belong to sender.
+   */
   function fundAccount(uint64 _accountId) external payable {
     Account storage account = accounts[_accountId];
     uint256 fullStake = decompress(account.fullStake) + msg.value;
@@ -194,6 +192,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit AccountFunded(_accountId, fullStake);
   }
 
+  /**
+   * @dev Starts a withdrawal process on an account you own.
+   * Withdrawals are not instant to prevent frontrunning.
+   * @param _accountId The id of the account. Must belong to sender.
+   */
   function startWithdrawAccount(uint64 _accountId) external {
     Account storage account = accounts[_accountId];
     require(account.wallet == msg.sender, "Only account owner can invoke account");
@@ -201,6 +204,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit AccountStartWithdraw(_accountId);
   }
 
+  /**
+   * @dev Withdraws any amount on an account that finished the withdrawing process.
+   * @param _accountId The id of the account. Must belong to sender.
+   * @param _amount The amount to be withdrawn.
+   */
   function withdrawAccount(uint64 _accountId, uint256 _amount) external {
     Account storage account = accounts[_accountId];
     require(account.wallet == msg.sender, "Only account owner can invoke account");
@@ -229,11 +237,24 @@ contract StakeCurate is IArbitrable, IEvidence {
    * 4294967296 * 26000 * (100 / 1000000000) = 11.16M ETH
    * time unknown.
   */
+
+  /**
+   * @dev Create arbitrator extra data. Will be assigned to an id.
+   * @param _arbitratorExtraData The extra data
+   */
   function createArbitratorExtraData(bytes calldata _arbitratorExtraData) external {
     arbitratorExtraDataMap[arbitratorExtraDataCount++] = _arbitratorExtraData;
     emit ArbitratorExtraDataCreated(_arbitratorExtraData);
   }
 
+  /**
+   * @dev Creates a list. They store all settings related to the dispute, stake, etc.
+   * @param _governor The address of the governor.
+   * @param _requiredStake The Cint32 version of the required stake per item.
+   * @param _removalPeriod The amount of seconds an item needs to go through removal period to be removed.
+   * @param _arbitratorExtraDataId Id of the internally stored arbitrator extra data
+   * @param _ipfsUri IPFS uri that links to the policy for this list
+   */
   function createList(
     address _governor,
     uint32 _requiredStake,
@@ -249,6 +270,15 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ListCreated(_governor, _requiredStake, _removalPeriod, _arbitratorExtraDataId, _ipfsUri);
   }
 
+  /**
+   * @dev Updates an existing list. Can only be called by its governor.
+   * @param _listId Id of the list to be updated.
+   * @param _governor Address of the new governor.
+   * @param _requiredStake Cint32 version of the new required stake per item.
+   * @param _removalPeriod Seconds until item is considered removed after starting removal.
+   * @param _arbitratorExtraDataId Id of the new arbitrator extra data
+   * @param _ipfsUri IPFS uri linking to the new policy.
+   */
   function updateList(
     uint64 _listId,
     address _governor,
@@ -266,6 +296,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ListUpdated(_listId, _governor, _requiredStake, _removalPeriod, _arbitratorExtraDataId, _ipfsUri);
   }
 
+  /**
+   * @notice Adds an item in a slot.
+   * @param _fromItemSlot Slot to look for a free itemSlot from.
+   * @param _listId Id of the list the item will be included in
+   * @param _accountId Id of the account owning the item.
+   * @param _ipfsUri IPFS uri that links to the content of the item
+   */
   function addItem(
     uint64 _fromItemSlot,
     uint64 _listId,
@@ -293,6 +330,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ItemAdded(itemSlot, _listId, _accountId, _ipfsUri);
   }
 
+  /**
+   * @dev Starts an item removal process.
+   * @param _itemSlot Slot of the item to remove.
+   */
   function startRemoveItem(uint64 _itemSlot) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
@@ -305,6 +346,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ItemStartRemoval(_itemSlot);
   }
 
+  /**
+   * @dev Cancels an ongoing removal process.
+   * @param _itemSlot Slot of the item.
+   */
   function cancelRemoveItem(uint64 _itemSlot) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
@@ -317,6 +362,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ItemStopRemoval(_itemSlot);
   }
 
+  /**
+   * @dev Adopts an item that's in adoption. This means, the ownership of the item is transferred
+   * from previous account to this new account. This serves as protection for certain attacks.
+   * @param _itemSlot Slot of the item to adopt.
+   * @param _adopterId Id of an account belonging to adopter, that will be new owner.
+   */
   function adoptItem(uint64 _itemSlot, uint64 _adopterId) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
@@ -337,6 +388,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ItemAdopted(_itemSlot, _adopterId);
   }
 
+  /**
+   * @dev Update committed amount of an item. Amounts are committed as a form of protection
+   * for item submitters, to support updating list required amounts without potentially draining
+   * users of their amounts.
+   * @param _itemSlot Slot of the item to recommit.
+   */
   function recommitItem(uint64 _itemSlot) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
@@ -353,6 +410,17 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ItemRecommitted(_itemSlot);
   }
 
+  /**
+   * @notice Challenge an item, with the intent of removing it and obtaining a reward.
+   * @param _itemSlot Slot of the item to challenge.
+   * @param _fromDisputeSlot DisputeSlot to start finding a place to store the dispute
+   * @param _minAmount Frontrunning protection due to this edge case:
+   * Submitter frontruns submitting a wrong item, and challenges himself to lock himself out of
+   * funds, so that his free stake is lower than whatever he has committed or is the requirement
+   * of the list. Possibly unneeded in OR. Also, it doesn't protect fully anyway, since submitter
+   * could challenge himself out of 99% of his funds. I'm open to remove it.
+   * @param _reason IPFS uri containing the evidence for the challenge.
+   */
   function challengeItem(
     uint64 _itemSlot,
     uint64 _fromDisputeSlot,
@@ -365,17 +433,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     
     require(itemCanBeChallenged(item, list), "Item cannot be challenged");
     uint256 freeStake = decompress(account.fullStake) - decompress(account.lockedStake);
-    /** challenger sets a minAmount flag because of this edge case:
-     * submitter notices something's wrong with the item, he challenges himself on another item
-     * to lock part of his stake, enough such that his freeStake no longer affords the list requirement,
-     * and thus "skipping" the withdrawing phase that was designed to prevent frontrunning.
-     * not very elegant, critique accepted.
-     * probably, not even strictly required for stake curate to be successful
-     * also doesn't prevent submitter to just go and challenge himself
-     * which counts as frontrunning. no clue on how to stop that.
-     * I guess frontrunning is a game two can play.
-     * note that, in any case, the item will stop showing up as included in the subgraph.
-    */
     require(_minAmount <= freeStake, "Not enough free stake to satisfy minAmount");
 
     // All requirements met, begin
@@ -426,22 +483,22 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   /**
-   * Intermission. How to duplicate evidenceGroupId (is this an exploit?)
-   * In the same block:
-   * 1. make a list with 0 removalPeriod.
-   * 2. Submit item (A) to a slot I
-   * 3. Set it for removal
-   * 4. Submit item (B) to slot I
-   * 5. Challenge it. Now both A and B technically had same evidenceGroupId.
-   * I don't see how this could be exploited in any way.
+   * @dev Submits evidence to potentially any dispute or item.
+   * @param _evidenceGroupId Id to identify the dispute or item to submit evidence for.
+   * @param _evidence IPFS uri linking to the evidence.
    */
-
   function submitEvidence(uint256 _evidenceGroupId, string calldata _evidence) external {
     // you can just submit evidence directly to any _evidenceGroupId
     // alternatively, could be (itemSlot, submissionTimestamp) pair 
     emit Evidence(arbitrator, _evidenceGroupId, msg.sender, _evidence);
   }
 
+  /**
+   * @notice Makes a contribution towards the appeal of one of the sides of a dispute.
+   * @dev In order to contribute, the appealDeadline must not have passed.
+   * @param _disputeSlot DisputeSlot containing the Dispute to contribute in.
+   * @param _party Party to support in this appeal. This decides if there's a reward.
+   */
   function contribute(uint64 _disputeSlot, Party _party) public payable {
     DisputeSlot storage dispute = disputes[_disputeSlot];
     require(dispute.state == DisputeState.Used, "DisputeSlot has to be used");
@@ -466,6 +523,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit Contribute(_disputeSlot, _party);
   }
 
+  /**
+   * @dev Executes an appeal and gets a dispute in appeal phase to the next round.
+   * Logic is separate from contribute in order to save gas. If this isn't called before
+   * appeal deadline, the Dispute won't be appealed at all, even if it was fully funded.
+   * @param _disputeSlot DisputeSlot to get to the next round.
+   */
   function startNextRound(uint64 _disputeSlot) external {
     DisputeSlot storage dispute = disputes[_disputeSlot];
     uint8 nextRound = dispute.currentRound + 1;
@@ -485,9 +548,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(currentAmount >= totalAmountNeeded, "Not enough to fund round");
     // All clear, let's appeal
     arbitrator.appeal{value: appealCost}(dispute.arbitratorDisputeId, arbitratorExtraData);
-    // Record the cost for sharing the spoils later
-    // Potential hazard due to the cint32 compression
-    // should be rounded up, to avoid slow drain attacks (they may get <1/2**24 of the appealCost)
+    /** Cint32 compression is lossy, rounded down. This could be a hazard if an exploiter finds a way
+     * to slowly drain <1/2**24 portions of the appealCost. It could be possible, since the contributions
+     * use a different compression scheme. And appealCost is there to lower the reward to compensate for the cost
+     * so having it lower than intended may open up the chance for draining.
+     * Possible solutions: use same compression scheme everywhere, or round appealCost up.
+     */
     roundContributionsMap[_disputeSlot][nextRound].appealCost = compress(appealCost);
 
     dispute.currentRound++;
@@ -501,10 +567,15 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit NextRound(_disputeSlot);
   }
 
+  /**
+   * @dev External function for the arbitrator to decide the result of a dispute. TRUSTED
+   * Arbitrator is trusted to:
+   * a. call this only once, after dispute is final.
+   * b. not call this to an unmapped _disputeId (since it would affect disputeSlot 0)
+   * @param _disputeId External id of the dispute
+   * @param _ruling Ruling of the dispute. If 0 or 1, submitter wins. Else (2) challenger wins
+   */
   function rule(uint256 _disputeId, uint256 _ruling) external override {
-    // arbitrator is trusted to:
-    // a. call this only once, after dispute is final
-    // b. not call this with an unknown _disputeId (it would affect the disputeSlot = 0)
     require(msg.sender == address(arbitrator), "Only arbitrator can rule");
     // 1. get slot from dispute
     uint64 disputeSlot = disputeIdToDisputeSlot[_disputeId];
@@ -554,6 +625,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit Ruling(arbitrator, _disputeId, _ruling);
   }
 
+  /**
+   * @dev Withdraws a contribution either eligible for reward or belonging to an unappealed round
+   * @param _disputeSlot Dispute slot containing the contribution
+   * @param _contributionSlot Contribution slot to withdraw
+   */
   function withdrawOneContribution(uint64 _disputeSlot, uint64 _contributionSlot) public {
     // check if dispute is used.
     DisputeSlot storage dispute = disputes[_disputeSlot];
@@ -575,6 +651,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       // only winner party can withdraw.
       require(party == winningParty, "That side lost the dispute");
       dispute.pendingWithdraws[uint256(winningParty)]--;
+      // set contribution as withdrawn. party doesn't matter, so it's chosen as Party.Requester
+      // (pendingWithdrawal = false, party = Party.Requester) => paramsToContribution(false, Party.Requester) = 0
       contribution.contribdata = 0;
       _withdrawSingleReward(contribution, roundContributions, party);
     } else {
@@ -591,23 +669,22 @@ contract StakeCurate is IArbitrable, IEvidence {
     if (dispute.pendingWithdraws[uint256(winningParty)] == 0
         && roundContributionsMap[_disputeSlot][dispute.currentRound + 1].contribCount == 0
     ) {
-      // this was last contrib remaining
-      // no need to decrement pendingWithdraws if last. saves gas.
-      // EDIT: for now I'm ignoring this potential gas save because it makes logic simpler
+      /// @dev I'm ignoring a potential gas save because it makes logic simpler
       dispute.state = DisputeState.Free;
       emit WithdrawnContribution(_disputeSlot, _contributionSlot);
       emit FreedDisputeSlot(_disputeSlot);
     } else {
-      // set contribution as withdrawn. party doesn't matter, so it's chosen as Party.Requester
-      // (pendingWithdrawal = false, party = Party.Requester) => paramsToContribution(false, Party.Requester) = 0
       emit WithdrawnContribution(_disputeSlot, _contributionSlot);
     }
   }
 
+  /**
+   * @dev Withdraws all contributions. Cheaper than doing so individually, because you save the
+   * 21k gas overhead and you don't need to keep track of withdrawn flags, except freeing the disputeSlot
+   * at the end. It's a public good.
+   * @param _disputeSlot Dispute to withdraw all contributions from.
+   */
   function withdrawAllContributions(uint64 _disputeSlot) public {
-    // this func is a "public good". it uses less gas overall to withdraw all
-    // contribs. because you only need to change 1 single flag to free the dispute slot.
-
     DisputeSlot storage dispute = disputes[_disputeSlot];
     require(dispute.state == DisputeState.Withdrawing, "Dispute must be in withdraw");
 
