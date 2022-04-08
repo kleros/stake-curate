@@ -19,13 +19,16 @@ library Cint32 {
   function compress(uint256 _amount) internal pure returns (uint32) {
     // maybe binary search to find ndigits? there should be a better way
     uint8 digits = 0;
+    if (_amount == 0) {
+        return (0);
+    }
     uint256 clone = _amount;
-    while (clone != 0) {
+    while (clone != 1) {
       clone = clone >> 1;
       digits++;
     }
-    // if digits < 24, don't shift it!
-    uint256 shiftAmount = (digits < 24) ? 0 : (digits - 24);
+    // if digits < 23, don't shift it!
+    uint256 shiftAmount = (digits < 23) ? 0 : (digits - 23);
     uint256 significantPart = _amount >> shiftAmount;
     uint256 shiftedShift = shiftAmount << 24;
     return (uint32(significantPart + shiftedShift));
