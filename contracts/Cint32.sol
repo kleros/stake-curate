@@ -1,5 +1,5 @@
 /**
- * @authors: [@greenlucid]
+ * @authors: [@greenlucid, @shotaronowhere]
  * @reviewers: []
  * @auditors: []
  * @bounties: []
@@ -7,7 +7,7 @@
  * SPDX-License-Identifier: Licenses are not real
  */
 
-pragma solidity ^0.8.11;
+pragma solidity ^0.8;
 
 /**
  * @title Cint32
@@ -27,13 +27,15 @@ library Cint32 {
     // if digits < 24, don't shift it!
     uint256 shiftAmount = (digits < 24) ? 0 : (digits - 24);
     uint256 significantPart = _amount >> shiftAmount;
-    uint256 shiftedShift = shiftAmount << 24;
+    uint256 shiftedShift = shiftAmount << 23;
     return (uint32(significantPart + shiftedShift));
   }
 
   function decompress(uint32 _cint32) internal pure returns (uint256) {
-    uint256 shift = _cint32 >> 24;
-    uint256 significantPart = _cint32 & 16_777_215; // 2^24 - 1
-    return(significantPart << shift);
+      if(_cint32 < 16_777_216) // 2**24
+        return _cint32;
+    uint256 shift = _cint32 >> 23;
+    // black magic, don't ask
+    return  (1 << (shift + 22)) + (1 << (shift - 1))*(_cint32-(shift << 23));
   }
 }
