@@ -1,5 +1,5 @@
 /**
- * @authors: [@greenlucid]
+ * @authors: [@greenlucid, @shotaronowhere]
  * @reviewers: []
  * @auditors: []
  * @bounties: []
@@ -16,27 +16,56 @@ pragma solidity ^0.8.11;
  */
 library Cint32 {
 
+  // https://gist.github.com/sambacha/f2d56948602575132574e73578778a41
+  function mostSignificantBit(uint256 x) private pure returns (uint8 r) {
+    if (x >= 0x100000000000000000000000000000000) {
+      x >>= 128;
+      r += 128;
+    }
+    if (x >= 0x10000000000000000) {
+      x >>= 64;
+      r += 64;
+    }
+    if (x >= 0x100000000) {
+      x >>= 32;
+      r += 32;
+    }
+    if (x >= 0x10000) {
+      x >>= 16;
+      r += 16;
+    }
+    if (x >= 0x100) {
+      x >>= 8;
+      r += 8;
+    }
+    if (x >= 0x10) {
+      x >>= 4;
+      r += 4;
+    }
+    if (x >= 0x4) {
+      x >>= 2;
+      r += 2;
+    }
+    if (x >= 0x2) r += 1;
+  }
+
   function compress(uint256 _amount) internal pure returns (uint32) {
-    // maybe binary search to find ndigits? there should be a better way
-    uint8 digits = 0;
     if (_amount == 0) {
-        return (0);
+      return 0;
     }
-    uint256 clone = _amount;
-    while (clone != 1) {
-      clone = clone >> 1;
-      digits++;
-    }
-    // if digits < 23, don't shift it!
-    uint256 shiftAmount = (digits < 23) ? 0 : (digits - 23);
+    uint digits = mostSignificantBit(_amount);
+    // if digits < 24, don't shift it!
+    uint256 shiftAmount = (digits < 24) ? 0 : (digits - 24);
     uint256 significantPart = _amount >> shiftAmount;
     uint256 shiftedShift = shiftAmount << 24;
     return (uint32(significantPart + shiftedShift));
   }
 
   function decompress(uint32 _cint32) internal pure returns (uint256) {
+    if (_cint32 < 33_554_432) { // 2**25
+      return _cint32;
+    }
     uint256 shift = _cint32 >> 24;
-    uint256 significantPart = _cint32 & 16_777_215; // 2^24 - 1
-    return(significantPart << shift);
+    return (1 << (shift + 23)) + (1 << (shift - 1))*(_cint32-(shift << 24));
   }
 }
