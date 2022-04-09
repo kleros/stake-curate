@@ -11,6 +11,7 @@ pragma solidity ^0.8.11;
 import "@kleros/erc-792/contracts/IArbitrable.sol";
 import "@kleros/erc-792/contracts/IArbitrator.sol";
 import "@kleros/erc-792/contracts/erc-1497/IEvidence.sol";
+import "./Cint32.sol";
 
 /**
  * @title Stake Curate
@@ -177,7 +178,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   function createAccount() external payable {
     Account storage account = accounts[accountCount++];
     account.wallet = msg.sender;
-    account.fullStake = compress(msg.value);
+    account.fullStake = Cint32.compress(msg.value);
     emit AccountCreated();
   }
 
@@ -187,8 +188,8 @@ contract StakeCurate is IArbitrable, IEvidence {
    */
   function fundAccount(uint64 _accountId) external payable {
     Account storage account = accounts[_accountId];
-    uint256 fullStake = decompress(account.fullStake) + msg.value;
-    account.fullStake = compress(fullStake);
+    uint256 fullStake = Cint32.decompress(account.fullStake) + msg.value;
+    account.fullStake = Cint32.compress(fullStake);
     emit AccountFunded(_accountId, fullStake);
   }
 
@@ -215,13 +216,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 timestamp = account.withdrawingTimestamp;
     require(timestamp != 0, "Withdrawal didn't start");
     require(timestamp + ACCOUNT_WITHDRAW_PERIOD <= block.timestamp, "Withdraw period didn't pass");
-    uint256 fullStake = decompress(account.fullStake);
-    uint256 lockedStake = decompress(account.lockedStake);
+    uint256 fullStake = Cint32.decompress(account.fullStake);
+    uint256 lockedStake = Cint32.decompress(account.lockedStake);
     uint256 freeStake = fullStake - lockedStake;
     require(freeStake >= _amount, "You can't afford to withdraw that much");
     // Initiate withdrawal
     uint256 newStake = fullStake - _amount;
-    account.fullStake = compress(newStake);
+    account.fullStake = Cint32.compress(newStake);
     account.withdrawingTimestamp = 0;
     payable(account.wallet).send(_amount);
     emit AccountWithdrawn(_accountId, _amount);
@@ -315,8 +316,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[itemSlot];
     List storage list = lists[_listId];
     uint32 compressedRequiredStake = list.requiredStake;
-    uint256 freeStake = decompress(account.fullStake) - decompress(account.lockedStake);
-    uint256 requiredStake = decompress(compressedRequiredStake);
+    uint256 freeStake = Cint32.decompress(account.fullStake) - Cint32.decompress(account.lockedStake);
+    uint256 requiredStake = Cint32.decompress(compressedRequiredStake);
     require(freeStake >= requiredStake, "Not enough free stake");
     // Item can be submitted
     item.slotState = ItemSlotState.Used;
@@ -377,8 +378,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(adopter.wallet == msg.sender, "Only adopter owner can adopt");
     require(item.slotState == ItemSlotState.Used, "Item slot must be Used");
     require(itemIsInAdoption(item, list, account), "Item is not in adoption");
-    uint256 freeStake = decompress(adopter.fullStake) - decompress(adopter.lockedStake);
-    require(decompress(list.requiredStake) <= freeStake, "Cannot afford adopting this item");
+    uint256 freeStake = Cint32.decompress(adopter.fullStake) - Cint32.decompress(adopter.lockedStake);
+    require(Cint32.decompress(list.requiredStake) <= freeStake, "Cannot afford adopting this item");
 
     item.accountId = _adopterId;
     item.committedStake = list.requiredStake;
@@ -402,8 +403,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(!itemIsFree(item, list) && item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
     require(!item.removing, "Item is being removed");
     
-    uint256 freeStake = decompress(account.fullStake) - decompress(account.lockedStake);
-    require(freeStake >= decompress(list.requiredStake), "Not enough to recommit item");
+    uint256 freeStake = Cint32.decompress(account.fullStake) - Cint32.decompress(account.lockedStake);
+    require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough to recommit item");
 
     item.committedStake = list.requiredStake;
 
@@ -432,12 +433,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     Account storage account = accounts[item.accountId];
     
     require(itemCanBeChallenged(item, list), "Item cannot be challenged");
-    uint256 freeStake = decompress(account.fullStake) - decompress(account.lockedStake);
+    uint256 freeStake = Cint32.decompress(account.fullStake) - Cint32.decompress(account.lockedStake);
     require(_minAmount <= freeStake, "Not enough free stake to satisfy minAmount");
 
     // All requirements met, begin
-    uint256 comittedAmount = decompress(list.requiredStake) <= freeStake
-      ? decompress(list.requiredStake)
+    uint256 comittedAmount = Cint32.decompress(list.requiredStake) <= freeStake
+      ? Cint32.decompress(list.requiredStake)
       : freeStake
     ;
     uint64 disputeSlot = firstFreeDisputeSlot(_fromDisputeSlot);
@@ -450,8 +451,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     // should item stop being removed? this opens a (costly?) dispute spam attack that disallows removing item.
     // if you don't stop the removal, the opposite happens. submitter can make dofus disputes until making the removal period
     item.removingTimestamp = 0;
-    item.committedStake = compress(comittedAmount);
-    account.lockedStake = compress(decompress(account.lockedStake) + comittedAmount);
+    item.committedStake = Cint32.compress(comittedAmount);
+    account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) + comittedAmount);
 
     disputes[disputeSlot] = DisputeSlot({
       arbitratorDisputeId: arbitratorDisputeId,
@@ -554,7 +555,7 @@ contract StakeCurate is IArbitrable, IEvidence {
      * so having it lower than intended may open up the chance for draining.
      * Possible solutions: use same compression scheme everywhere, or round appealCost up.
      */
-    roundContributionsMap[_disputeSlot][nextRound].appealCost = compress(appealCost);
+    roundContributionsMap[_disputeSlot][nextRound].appealCost = Cint32.compress(appealCost);
 
     dispute.currentRound++;
 
@@ -597,9 +598,9 @@ contract StakeCurate is IArbitrable, IEvidence {
       }
       item.slotState = ItemSlotState.Used;
       // free the locked stake
-      uint256 lockedAmount = decompress(account.lockedStake);
-      uint256 updatedLockedAmount = lockedAmount - decompress(item.committedStake);
-      account.lockedStake = compress(updatedLockedAmount);
+      uint256 lockedAmount = Cint32.decompress(account.lockedStake);
+      uint256 updatedLockedAmount = lockedAmount - Cint32.decompress(item.committedStake);
+      account.lockedStake = Cint32.compress(updatedLockedAmount);
     } else {
       // challenger won. emit disputeslot to update the status to Withdrawing in the subgraph
       emit DisputeSuccessful(disputeSlot);
@@ -607,10 +608,10 @@ contract StakeCurate is IArbitrable, IEvidence {
       // 4b. slot is now Free
       item.slotState = ItemSlotState.Free;
       // now, award the commited stake to challenger
-      uint256 amount = decompress(item.committedStake);
+      uint256 amount = Cint32.decompress(item.committedStake);
       // remove amount from the account
-      account.fullStake = compress(decompress(account.fullStake) - amount);
-      account.lockedStake = compress(decompress(account.lockedStake) - amount);
+      account.fullStake = Cint32.compress(Cint32.decompress(account.fullStake) - amount);
+      account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) - amount);
       // is it dangerous to send before the end of the function? please answer on audit
       payable(dispute.challenger).send(amount);
     }
@@ -744,7 +745,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint256 spoils = contribDecompress(
       _roundContributions.partyTotal[0]
       + _roundContributions.partyTotal[1]
-    ) - decompress(_roundContributions.appealCost);
+    ) - Cint32.decompress(_roundContributions.appealCost);
     uint256 share = (spoils * uint256(_contribution.amount)) / uint256(_roundContributions.partyTotal[uint256(_winningParty)]);
     // should use transfer instead? if transfer fails, then disputeSlot will stay in DisputeState.Withdrawing
     // if a transaction reverts due to not enough gas, does the send() ether remain sent? if that's so,
@@ -785,32 +786,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     bool free = itemIsFree(_item, _list);
 
     // the item must have same or more committed amount than required for list
-    bool enoughCommitted = decompress(_item.committedStake) >= decompress(_list.requiredStake);
+    bool enoughCommitted = Cint32.decompress(_item.committedStake) >= Cint32.decompress(_list.requiredStake);
     return (!free && _item.slotState == ItemSlotState.Used && enoughCommitted);
   }
 
   // ----- PURE FUNCTIONS -----
-  // Pasted from Cint32.sol
-  function compress(uint256 _amount) internal pure returns (uint32) {
-    // maybe binary search to find ndigits? there should be a better way
-    uint8 digits = 0;
-    uint256 clone = _amount;
-    while (clone != 0) {
-      clone = clone >> 1;
-      digits++;
-    }
-    // if digits < 24, don't shift it!
-    uint256 shiftAmount = (digits < 24) ? 0 : (digits - 24);
-    uint256 significantPart = _amount >> shiftAmount;
-    uint256 shiftedShift = shiftAmount << 24;
-    return (uint32(significantPart + shiftedShift));
-  }
-
-  function decompress(uint32 _cint32) internal pure returns (uint256) {
-    uint256 shift = _cint32 >> 24;
-    uint256 significantPart = _cint32 & 16_777_215; // 2^24 - 1
-    return(significantPart << shift);
-  }
 
   function contribCompress(uint256 _amount) internal pure returns (uint80) {
     return (uint80(_amount >> AMOUNT_BITSHIFT));
@@ -832,9 +812,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     // check if any of the 4 conditions for adoption is met:
     bool beingRemoved = _item.removing;
     bool accountWithdrawing = _account.withdrawingTimestamp != 0;
-    bool committedUnderRequired = decompress(_item.committedStake) < decompress(_list.requiredStake);
-    uint256 freeStake = decompress(_account.fullStake) - decompress(_account.lockedStake);
-    bool notEnoughFreeStake = freeStake < decompress(_list.requiredStake);
+    bool committedUnderRequired = Cint32.decompress(_item.committedStake) < Cint32.decompress(_list.requiredStake);
+    uint256 freeStake = Cint32.decompress(_account.fullStake) - Cint32.decompress(_account.lockedStake);
+    bool notEnoughFreeStake = freeStake < Cint32.decompress(_list.requiredStake);
     return (beingRemoved || accountWithdrawing || committedUnderRequired || notEnoughFreeStake);
   }
 }
