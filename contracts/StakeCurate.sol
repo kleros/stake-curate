@@ -248,6 +248,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _requiredStake The Cint32 version of the required stake per item.
    * @param _removalPeriod The amount of seconds an item needs to go through removal period to be removed.
    * @param _arbitratorExtraDataId Id of the internally stored arbitrator extra data
+   * @param _metaEvidence IPFS uri of metaEvidence
    */
   function createList(
     address _governor,
@@ -273,6 +274,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _requiredStake Cint32 version of the new required stake per item.
    * @param _removalPeriod Seconds until item is considered removed after starting removal.
    * @param _arbitratorExtraDataId Id of the new arbitrator extra data
+   * @param _metaEvidence IPFS uri of metaEvidence
    */
   function updateList(
     uint64 _listId,
