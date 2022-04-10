@@ -12,10 +12,7 @@ const deployContracts = async (deployer: Signer) => {
   await arbitrator.deployed()
 
   const StakeCurate = await ethers.getContractFactory("StakeCurate", deployer)
-  const stakeCurate = await StakeCurate.deploy(
-    arbitrator.address,
-    "metaEvidence"
-  )
+  const stakeCurate = await StakeCurate.deploy(arbitrator.address)
   await stakeCurate.deployed()
 
   return {
@@ -126,19 +123,23 @@ describe("Stake Curate", async () => {
     })
 
     it("Creates a list", async () => { 
-      // governor, requiredStake, removalPeriod, arbitratorExtraDataId, ipfsUri
+      // governor, requiredStake, removalPeriod, arbitratorExtraDataId, metaEvidence
       const args = [governor.address, 100, LIST_REMOVAL_PERIOD, 0, "list_policy"]
       await expect(stakeCurate.connect(deployer).createList(...args))
         .to.emit(stakeCurate, "ListCreated")
-        .withArgs(...args)
+        .withArgs(governor.address, 100, LIST_REMOVAL_PERIOD, 0)
+        .to.emit(stakeCurate, "MetaEvidence")
+        .withArgs(0, "list_policy")
     })
 
     it("Updates a list", async () => {
-      // listId, governor, requiredStake, removalPeriod, arbitratorExtraDataId, ipfsUri
+      // listId, governor, requiredStake, removalPeriod, arbitratorExtraDataId, metaEvidence
       const args = [0, governor.address, 100, LIST_REMOVAL_PERIOD, 0, "list_policy"]
       await expect(stakeCurate.connect(governor).updateList(...args))
         .to.emit(stakeCurate, "ListUpdated")
-        .withArgs(...args)
+        .withArgs(0, governor.address, 100, LIST_REMOVAL_PERIOD, 0)
+        .to.emit(stakeCurate, "MetaEvidence")
+        .withArgs(0, "list_policy")
     })
 
     it("Interloper cannot update the list", async () => {
@@ -173,7 +174,7 @@ describe("Stake Curate", async () => {
       const createListArgs = [governor.address, 2000, 60, 0, IPFS_URI]
       await expect(stakeCurate.connect(deployer).createList(...createListArgs))
         .to.emit(stakeCurate, "ListCreated")
-        .withArgs(...createListArgs)
+        .withArgs(governor.address, 2000, 60, 0)
 
       const addItemArgs = [0, 1, 0, IPFS_URI] // fromItemSlot, listId, accountId, ipfsUri
       await expect(stakeCurate.connect(deployer).addItem(...addItemArgs))
