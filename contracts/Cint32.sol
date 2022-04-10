@@ -50,8 +50,8 @@ library Cint32 {
   }
 
   function compress(uint256 _amount) internal pure returns (uint32) {
-    // base = 2^29 - 2^27 - 2^0
-    // complement = 2^24
+    // base = 2**29 - 2**27 - 2**0
+    // complement = 2**24
     // base + complement = 419_430_399
     if (_amount <= 419_430_399) {
       return uint32(_amount);
@@ -68,8 +68,8 @@ library Cint32 {
   }
 
   function decompress(uint32 _cint32) internal pure returns (uint256) {
-    // base = 2^29 - 2^27 - 2^0
-    // complement = 2^24
+    // base = 2**29 - 2**27 - 2**0
+    // complement = 2**24
     // base + complement = 419_430_399
     if (_cint32 <= 419_430_399) {
       return uint32(_cint32);
@@ -77,9 +77,11 @@ library Cint32 {
     // base - complement = 385_875_967
     uint32 translation = 385_875_967;
 
-    // special case to avoid 2**32-1 overflows under line 84
+    // special case to avoid overflows in line 84
+    // 2**32-1 = 4_294_967_295
     if(_cint32 == 4_294_967_295){
-      return 115792089237316195423570985008687907853269984665640564039457584007913129639935;
+      // 2**256 - 1 = 115_792_089_237_316_195_423_570_985_008_687_907_853_269_984_665_640_564_039_457_584_007_913_129_639_935
+      return 115_792_089_237_316_195_423_570_985_008_687_907_853_269_984_665_640_564_039_457_584_007_913_129_639_935;
     }
     _cint32 = _cint32 - translation;
     uint256 shift = _cint32 >> 24;
