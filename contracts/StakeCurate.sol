@@ -108,9 +108,9 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ArbitratorExtraDataCreated(bytes _arbitratorExtraData);
 
   event ListCreated(address _governor, uint32 _requiredStake, uint32 _removalPeriod,
-    uint32 _arbitratorExtraDataId, string _ipfsUri);
+    uint32 _arbitratorExtraDataId);
   event ListUpdated(uint64 _listId, address _governor, uint32 _requiredStake,
-    uint32 _removalPeriod, uint32 _arbitratorExtraDataId, string _ipfsUri);
+    uint32 _removalPeriod, uint32 _arbitratorExtraDataId);
 
   event ItemAdded(uint64 _itemSlot, uint64 _listId, uint64 _accountId, string _ipfsUri);
   event ItemStartRemoval(uint64 _itemSlot);
@@ -161,15 +161,9 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /** @dev Constructs the StakeCurate contract.
    *  @param _arbitrator The address of the arbitrator.
-   *  @param _metaEvidence The IPFS uri of the metaEvidence to be used for a
-   *  Please review this if you think using the same _metaEvidence for all disputes is not feasible.
    */
-  constructor(
-    address _arbitrator,
-    string memory _metaEvidence
-  ) {
+  constructor(address _arbitrator) {
     arbitrator = IArbitrator(_arbitrator);
-    emit MetaEvidence(0, _metaEvidence);
   }
 
   // ----- PUBLIC FUNCTIONS -----
@@ -254,21 +248,22 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _requiredStake The Cint32 version of the required stake per item.
    * @param _removalPeriod The amount of seconds an item needs to go through removal period to be removed.
    * @param _arbitratorExtraDataId Id of the internally stored arbitrator extra data
-   * @param _ipfsUri IPFS uri that links to the policy for this list
    */
   function createList(
     address _governor,
     uint32 _requiredStake,
     uint32 _removalPeriod,
     uint32 _arbitratorExtraDataId,
-    string calldata _ipfsUri
+    string calldata _metaEvidence
   ) external {
-    List storage list = lists[listCount++];
+    uint64 listId = listCount++;
+    List storage list = lists[listId];
     list.governor = _governor;
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
     list.arbitratorExtraDataId = _arbitratorExtraDataId;
-    emit ListCreated(_governor, _requiredStake, _removalPeriod, _arbitratorExtraDataId, _ipfsUri);
+    emit ListCreated(_governor, _requiredStake, _removalPeriod, _arbitratorExtraDataId);
+    emit MetaEvidence(listId, _metaEvidence);
   }
 
   /**
@@ -278,7 +273,6 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _requiredStake Cint32 version of the new required stake per item.
    * @param _removalPeriod Seconds until item is considered removed after starting removal.
    * @param _arbitratorExtraDataId Id of the new arbitrator extra data
-   * @param _ipfsUri IPFS uri linking to the new policy.
    */
   function updateList(
     uint64 _listId,
@@ -286,7 +280,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _requiredStake,
     uint32 _removalPeriod,
     uint32 _arbitratorExtraDataId,
-    string calldata _ipfsUri
+    string calldata _metaEvidence
   ) external {
     List storage list = lists[_listId];
     require(list.governor == msg.sender, "Only governor can update list");
@@ -294,7 +288,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
     list.arbitratorExtraDataId = _arbitratorExtraDataId;
-    emit ListUpdated(_listId, _governor, _requiredStake, _removalPeriod, _arbitratorExtraDataId, _ipfsUri);
+    emit ListUpdated(_listId, _governor, _requiredStake, _removalPeriod, _arbitratorExtraDataId);
+    emit MetaEvidence(_listId, _metaEvidence);
   }
 
   /**
@@ -478,8 +473,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // ERC 1497
     // evidenceGroupId is obtained from the (itemSlot, submissionTimestamp) pair
     uint256 evidenceGroupId = uint256(keccak256(abi.encodePacked(_itemSlot, item.submissionTimestamp)));
-    // metaEvidenceId is just 0 (afaik, it should be enough to have the same metaEvidence for all items?)
-    emit Dispute(arbitrator, arbitratorDisputeId, 0, evidenceGroupId);
+    emit Dispute(arbitrator, arbitratorDisputeId, item.listId, evidenceGroupId);
     emit Evidence(arbitrator, evidenceGroupId, msg.sender, _reason);
   }
 
