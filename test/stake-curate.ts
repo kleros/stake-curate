@@ -297,63 +297,6 @@ describe("Stake Curate", async () => {
         .withArgs(arbitrator.address, 0, deployer.address, IPFS_URI)
     })
 
-    it("Make a contribution", async () => {
-      // Mock ruling
-      await arbitrator.connect(deployer).giveRuling(0, 2, 3_600) // disputeId, ruling, appealWindow
-      const args = [0, 0] // disputeSlot, party 
-      const value = 500_000_000
-      await expect(await stakeCurate.connect(deployer).contribute(...args, {value}))
-        .to.emit(stakeCurate, "Contribute")
-        .withArgs(...args)
-        .to.changeEtherBalance(deployer, -value)
-    })
-
-    it("Cannot make a contribution to an unused Dispute", async () => {
-      const args = [2, 0] // disputeSlot, party 
-      const value = 500_000_000
-      await expect(stakeCurate.connect(deployer).contribute(...args, {value}))
-        .to.be.revertedWith("DisputeSlot has to be used")
-    })
-
-    it("Cannot make a contribution for a party that doesn't exist", async () => {
-      const args = [0, 10] // disputeSlot, party 
-      const value = 500_000_000
-      await expect(stakeCurate.connect(deployer).contribute(...args, {value}))
-        .to.be.reverted
-    })
-
-    it("Cannot start next round without enough funds", async () => {
-      const args = [0] // disputeSlot
-      await expect(stakeCurate.connect(deployer).startNextRound(...args))
-        .to.be.revertedWith("Not enough to fund round")
-    })
-
-    it("Cannot start next round in unused Dispute", async () => {
-      const args = [10] // disputeSlot
-      await expect(stakeCurate.connect(deployer).startNextRound(...args))
-        .to.be.revertedWith("Dispute must be Used")
-    })
-
-    it("Start next round", async () => {
-      // contribute enough first.
-      const contribArgs = [0, 1]
-      const value = 550_000_000 // I overdo it due to lossy compression
-      for (let i = 0; i < 7; i++) {
-        await expect(stakeCurate.connect(challenger).contribute(...contribArgs, {value}))
-          .to.emit(stakeCurate, "Contribute")
-          .withArgs(...contribArgs)
-      }
-
-      const args = [0] // disputeSlot
-      await expect(stakeCurate.connect(deployer).startNextRound(...args))
-        .to.emit(stakeCurate, "NextRound")
-        .withArgs(...args)
-
-      // just to test contribs for unappealed rounds later
-      await stakeCurate.connect(challenger).contribute(0, 0, {value})
-      await stakeCurate.connect(challenger).contribute(0, 1, {value})
-    })
-
     it("Rule for challenger", async () => {
       // Mock ruling
       await arbitrator.connect(deployer).giveRuling(0, 2, 3_600) // disputeId, ruling, appealWindow
@@ -361,8 +304,6 @@ describe("Stake Curate", async () => {
 
       const args = [0] // disputeId
       await expect(arbitrator.connect(deployer).executeRuling(...args))
-        .to.emit(stakeCurate, "DisputeSuccessful")
-        .withArgs(0) // disputeSlot
         .to.emit(stakeCurate, "Ruling")
         .withArgs(arbitrator.address, 0, 2)
     })
@@ -389,169 +330,16 @@ describe("Stake Curate", async () => {
         .to.be.revertedWith("Only arbitrator can rule")
     })
 
-    it("Withdraw one contribution", async () => {
-      const args = [0, 1] // disputeSlot, contribSlot
-
-      // Let's figure out expected value:
-      // Submitter side: 500_000_000. After compression, stores a 29.
-      // Challenger side: 550_000_000, after compression stores a 32. (done 7 times)
-      // 29 + 32 * 7 = 253
-
-      // appeal cost is 0b111011100110101100101000000000
-      // shiftAmount = 30 - 24 = 6
-      // significantPart = 0b111011100110101100101000
-      // shiftedShift = 6 << 24 = 0b110000000000000000000000000
-      // gets compressed to: (6, 15625000) = 116288296
-
-      // appealCost decompressed is:
-      // shift = 116288296 >> 24 = 6
-      // significantPart = 116288296 & 16_777_215 = 15625000
-      // 15625000 << 6 = 1_000_000_000  ....(no information loss, in this case)
-
-      // totals are 253 << 24 => 4_244_635_648
-      // spoils are 4_244_635_648 - 1_000_000_000 = 3_244_635_648
-
-      // share is:
-      // spoils * part / total_side
-      // 3_244_635_648 * 32 / 224 -> 463_519_378
-
-      /** "Wait but he put 550_000_000 and he got less in return!"
-       * yeah that's because:
-       * challenger side was overfunded (they put 83% of funds)
-       * 33% of the total went to pay appeal fees, so there wasn't enough
-       * 83%/3 > 17%, so both sides lost money.
-       * from submitter side to cover it.
-       * also some loses from compression (at this small amounts, it's noticeable)
-       * maybe... a way to cover this would be to increase the surplus factor.
-       * that'd make it more worthwhile for contributors to fund "obvious" sides
-      */
-
-      await expect(await stakeCurate.connect(deployer).withdrawOneContribution(...args))
-        .to.emit(stakeCurate, "WithdrawnContribution")
-        .withArgs(...args)
-        .to.changeEtherBalance(challenger, 463_519_378)
-    })
-
-    it("Cannot withdraw from losing side", async () => {
-      const args = [0, 0] // disputeSlot, contribSlot
-
-      await expect(stakeCurate.connect(deployer).withdrawOneContribution(...args))
-        .to.be.revertedWith("That side lost the dispute")
-    })
-
-    it("Cannot withdraw from Used dispute slot", async () => {
-      const args = [1, 0] // disputeSlot, contribSlot
-
-      await expect(stakeCurate.connect(deployer).withdrawOneContribution(...args))
-        .to.be.revertedWith("DisputeSlot must be in withdraw")
-    })
-
-    it("Cannot withdraw a contribution that was never made", async () => {
-      const args = [0, 10] // disputeSlot, contribSlot
-
-      await expect(stakeCurate.connect(deployer).withdrawOneContribution(...args))
-        .to.be.revertedWith("DisputeSlot lacks that contrib")
-    })
-
-    it("Cannot withdraw an already withdrawn contribution", async () => {
-      const args = [0, 1] // disputeSlot, contribSlot
-
-      await expect(stakeCurate.connect(deployer).withdrawOneContribution(...args))
-        .to.be.revertedWith("Contribution withdrawn already")
-    })
-
-    it("Withdrawing from last unappealed round reimburses contribution", async () => {
-      // was 550_000_000, so it's same without dust
-
-      // submitter side (losing)
-      await expect(await stakeCurate.connect(deployer).withdrawOneContribution(0, 8))
-        .to.emit(stakeCurate, "WithdrawnContribution")
-        .to.changeEtherBalance(challenger, 550_000_000 >> 24 << 24)
-      
-      // challenger side (winning)
-      await expect(await stakeCurate.connect(deployer).withdrawOneContribution(0, 9))
-        .to.emit(stakeCurate, "WithdrawnContribution")
-        .to.changeEtherBalance(challenger, 550_000_000 >> 24 << 24)
-    })
-
-    it("Withdrawing all contributions frees the disputeSlot", async () => {
-      const args = [0] // disputeSlot
-
-      // checkout calculations above
-      // this should be 463_519_378 * 6
-
-      await expect(await stakeCurate.connect(deployer).withdrawAllContributions(...args))
-        .to.emit(stakeCurate, "FreedDisputeSlot")
-        .withArgs(...args)
-        .to.changeEtherBalance(challenger, 463_519_378 * 6)
-    })
-
-    it("Cannot withdraw all contributions from non-withdrawing disputeSlot", async () => {
-      // Free dispute
-      await expect(stakeCurate.connect(deployer).withdrawAllContributions(0))
-        .to.be.revertedWith("Dispute must be in withdraw")
-      // Used dispute
-      await expect(stakeCurate.connect(deployer).withdrawAllContributions(1))
-        .to.be.revertedWith("Dispute must be in withdraw")
-    })
-
-    it("Dispute in Withdrawing doesn't count as Free dispute, won't be overwritten", async () => {
-      // get a dispute to withdrawing first
-      await stakeCurate.connect(deployer).addItem(15, 0, 0, IPFS_URI)
-      await stakeCurate.connect(challenger).challengeItem(15, 0, 0, IPFS_URI, {value: CHALLENGE_FEE})
-      await arbitrator.connect(deployer).giveRuling(3, 2, 3_600) // disputeId, ruling, appealWindow
-      await stakeCurate.connect(deployer).contribute(0, 0, {value: 5_000_000_000})
-      await stakeCurate.connect(deployer).startNextRound(0)
-      await arbitrator.connect(deployer).giveRuling(3, 1, 3_600) // disputeId, ruling, appealWindow
-      await ethers.provider.send("evm_increaseTime", [3_600 + 1])
-      await arbitrator.connect(deployer).executeRuling(3)
-
-      await expect(stakeCurate.connect(deployer).addItem(10, 0, 0, IPFS_URI))
-        .to.emit(stakeCurate, "ItemAdded")
-        .withArgs(10, 0, 0, IPFS_URI)
-
-      await expect(stakeCurate.connect(deployer).challengeItem(10, 0, 0, IPFS_URI, {value: CHALLENGE_FEE}))
-        .to.emit(stakeCurate, "ItemChallenged")
-        .withArgs(10, 3) // because in this test 0 is taken and 1 and 2 were taken in prev tests.
-    })
-
-    it("Withdrawing last contribution frees the disputeSlot", async () => {
-      const args = [0, 0] // disputeSlot, contribSlot
-
-      await expect(stakeCurate.connect(deployer).withdrawOneContribution(...args))
-        .to.emit(stakeCurate, "WithdrawnContribution")
-        .withArgs(0, 0)
-        .to.emit(stakeCurate, "FreedDisputeSlot")
-        .withArgs(0)
-    })
-
-    it("Ruling a dispute without contribs frees the slot automatically", async () => {
-      // note: disputeSlot is 3, disputeId is 4
-      const args = [3]
-
-      await arbitrator.connect(deployer).giveRuling(4, 2, 3_600) // disputeId, ruling, appealWindow
-      await ethers.provider.send("evm_increaseTime", [3_600 + 1])
-
-      await expect(arbitrator.connect(deployer).executeRuling(4))
-        .to.emit(stakeCurate, "DisputeSuccessful")
-        .withArgs(3)
-        .to.emit(stakeCurate, "Ruling")
-        .withArgs(arbitrator.address, 4, 2)
-        .to.emit(stakeCurate, "FreedDisputeSlot")
-        .withArgs(3)
-    })
-
     it("Rule for submitter", async () => {
       // get a dispute to withdrawing first
       await stakeCurate.connect(deployer).addItem(20, 0, 0, IPFS_URI)
       await stakeCurate.connect(challenger).challengeItem(20, 4, 0, IPFS_URI, {value: CHALLENGE_FEE})
-      await arbitrator.connect(deployer).giveRuling(5, 1, 3_600) // disputeId, ruling, appealWindow
+      await arbitrator.connect(deployer).giveRuling(3, 1, 3_600) // disputeId, ruling, appealWindow
       await ethers.provider.send("evm_increaseTime", [3_600 + 1])
 
-      await expect(arbitrator.connect(deployer).executeRuling(5))
-        .to.emit(stakeCurate, "DisputeFailed")
+      await expect(arbitrator.connect(deployer).executeRuling(3))
         .to.emit(stakeCurate, "Ruling")
-        .withArgs(arbitrator.address, 5, 1)
+        .withArgs(arbitrator.address, 3, 1)
 
       // check if slot is overwritten (it shouldn't since item won dispute)
       await expect(stakeCurate.connect(deployer).addItem(20, 0, 0, IPFS_URI))
@@ -662,11 +450,11 @@ describe("Stake Curate", async () => {
       await stakeCurate.connect(deployer).startRemoveItem(200)
       await ethers.provider.send("evm_increaseTime", [LIST_REMOVAL_PERIOD/2])
       await stakeCurate.connect(challenger).challengeItem(200, 200, 0, IPFS_URI, {value: CHALLENGE_FEE}) // disputeId = 7
-      await arbitrator.connect(deployer).giveRuling(7, 1, 3_600) // disputeId, ruling, appealWindow
+      await arbitrator.connect(deployer).giveRuling(5, 1, 3_600) // disputeId, ruling, appealWindow
       await ethers.provider.send("evm_increaseTime", [3_600 + 1])
-      await expect(arbitrator.connect(deployer).executeRuling(7))
-        .to.emit(stakeCurate, "DisputeFailed")
-        .withArgs(200)
+      await expect(arbitrator.connect(deployer).executeRuling(5))
+        .to.emit(stakeCurate, "Ruling")
+        .withArgs(arbitrator.address, 5, 1)
       // shouldn't been removed yet (since it reset), so adding gets into the next available slot
       await ethers.provider.send("evm_increaseTime", [LIST_REMOVAL_PERIOD/2 + 1])
       await expect(stakeCurate.connect(deployer).addItem(200, 0, 0, IPFS_URI))
