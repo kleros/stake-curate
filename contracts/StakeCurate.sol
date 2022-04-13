@@ -91,9 +91,6 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   event ItemChallenged(uint64 _itemSlot, uint64 _disputeSlot);
 
-  event DisputeSuccessful(uint64 _disputeSlot);
-  event DisputeFailed(uint64 _disputeSlot);
-
   // ----- CONTRACT STORAGE -----
 
   // Note: This contract is vulnerable to deprecated arbitrator. Redeploying contract would mean that
@@ -456,7 +453,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     // 0 refuse, 1 staker, 2 challenger.
     if (_ruling == 1 || _ruling == 0) {
       // staker won.
-      emit DisputeFailed(disputeSlot);
       // 4a. return item to used, not disputed.
       if (item.removing) {
         item.removingTimestamp = uint32(block.timestamp);
@@ -467,8 +463,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       uint256 updatedLockedAmount = lockedAmount - Cint32.decompress(item.committedStake);
       account.lockedStake = Cint32.compress(updatedLockedAmount);
     } else {
-      // challenger won. emit disputeslot to update the status to Withdrawing in the subgraph
-      emit DisputeSuccessful(disputeSlot);
+      // challenger won.
       // 4b. slot is now Free
       item.slotState = ItemSlotState.Free;
       // now, award the commited stake to challenger
