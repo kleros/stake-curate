@@ -120,6 +120,13 @@ describe("Stake Curate", async () => {
       await expect(stakeCurate.connect(deployer).withdrawAccount(...args))
         .to.be.revertedWith("Withdrawal didn't start")
     })
+
+    it("Cannot withdraw more than free stake", async () => {
+      await stakeCurate.connect(deployer).startWithdrawAccount(0)
+      await ethers.provider.send("evm_increaseTime", [ACCOUNT_WITHDRAW_PERIOD + 1])
+      await expect(stakeCurate.connect(deployer).withdrawAccount(0, 900))
+        .to.be.revertedWith("You can't afford to withdraw that much")
+    })
   })
 
   describe("lists...", () => {
@@ -471,18 +478,20 @@ describe("Stake Curate", async () => {
         .withArgs(arbitrator.address, 0, 2)
     })
 
-    it("Cannot withdraw more than free stake", async () => {
-      // Also this test reuses a dispute slot to check how cheap it is
-      // add a new item to rechallenge it
-      await stakeCurate.connect(deployer).startWithdrawAccount(0)
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
-      // note this dispute is in slot 2 (because 0 and 1) 
-      await stakeCurate.connect(challenger).challengeItem(0, 0, 0, IPFS_URI, {value: CHALLENGE_FEE})
-      await ethers.provider.send("evm_increaseTime", [ACCOUNT_WITHDRAW_PERIOD + 1])
+    it("Dispute slot can be reused after resolution", async () => {
+      const value = CHALLENGE_FEE
+      await stakeCurate.connect(challenger).challengeItem(0, 0, 0, IPFS_URI, { value })
+      await arbitrator.connect(deployer).giveRuling(0, 2, 3_600) // disputeId, ruling, appealWindow
+      await ethers.provider.send("evm_increaseTime", [3_600 + 1])
 
-      // Now deployer has another 100 locked. If math is right he has 900 full, with 100 locked, so 800 free.
-      await expect(stakeCurate.connect(deployer).withdrawAccount(0, 900))
-        .to.be.revertedWith("You can't afford to withdraw that much")
+      const args = [0] // disputeId
+      await expect(arbitrator.connect(deployer).executeRuling(...args))
+        .to.emit(stakeCurate, "Ruling")
+        .withArgs(arbitrator.address, 0, 2)
+
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
+      await expect(stakeCurate.connect(challenger).challengeItem(0, 0, 0, IPFS_URI, { value }))
+        .to.emit(stakeCurate, "ItemChallenged")
     })
 
     it("Interloper cannot call rule", async () => {
