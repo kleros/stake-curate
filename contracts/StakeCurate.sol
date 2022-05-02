@@ -40,11 +40,10 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   struct List {
-    address governor;
+    uint64 governorId;
     uint32 requiredStake;
     uint32 removalPeriod;
-    uint32 arbitratorExtraDataId; // arbitratorExtraData cant mutate (because of risks during dispute)
-    // review we can discuss to use uint64 instead, if uint32 was too vulnerable to spam attack
+    uint64 arbitratorExtraDataId; // arbitratorExtraData cant mutate (because of risks during dispute)
   }
 
   struct Item {
@@ -63,7 +62,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // ----
     address challenger;
     uint64 itemSlot;
-    uint32 arbitratorExtraDataId; // make sure arbitratorExtraData doesn't change
+    uint64 arbitratorExtraDataId; // make sure arbitratorExtraData doesn't change
     // ----
     DisputeState state;
   }
@@ -77,10 +76,10 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   event ArbitratorExtraDataCreated(bytes _arbitratorExtraData);
 
-  event ListCreated(address _governor, uint32 _requiredStake, uint32 _removalPeriod,
-    uint32 _arbitratorExtraDataId);
-  event ListUpdated(uint64 _listId, address _governor, uint32 _requiredStake,
-    uint32 _removalPeriod, uint32 _arbitratorExtraDataId);
+  event ListCreated(uint64 _governorId, uint32 _requiredStake, uint32 _removalPeriod,
+    uint64 _arbitratorExtraDataId);
+  event ListUpdated(uint64 _listId, uint64 _governorId, uint32 _requiredStake,
+    uint32 _removalPeriod, uint64 _arbitratorExtraDataId);
 
   event ItemAdded(uint64 _itemSlot, uint64 _listId, uint64 _accountId, string _ipfsUri);
   event ItemStartRemoval(uint64 _itemSlot);
@@ -110,7 +109,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   mapping(uint64 => Item) internal items;
   mapping(uint64 => DisputeSlot) internal disputes;
   mapping(uint256 => uint64) internal disputeIdToDisputeSlot;
-  mapping(uint32 => bytes) internal arbitratorExtraDataMap;
+  mapping(uint64 => bytes) internal arbitratorExtraDataMap;
 
   /** @dev Constructs the StakeCurate contract.
    *  @param _arbitrator The address of the arbitrator.
@@ -197,33 +196,34 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @dev Creates a list. They store all settings related to the dispute, stake, etc.
-   * @param _governor The address of the governor.
+   * @param _governorId The id of the governor.
    * @param _requiredStake The Cint32 version of the required stake per item.
    * @param _removalPeriod The amount of seconds an item needs to go through removal period to be removed.
    * @param _arbitratorExtraDataId Id of the internally stored arbitrator extra data
    * @param _metaEvidence IPFS uri of metaEvidence
    */
   function createList(
-    address _governor,
+    uint64 _governorId,
     uint32 _requiredStake,
     uint32 _removalPeriod,
-    uint32 _arbitratorExtraDataId,
+    uint64 _arbitratorExtraDataId,
     string calldata _metaEvidence
   ) external {
+    //require(accounts[_governorId].wallet == msg.sender, "Governor must exist and be the function caller");
     uint64 listId = listCount++;
     List storage list = lists[listId];
-    list.governor = _governor;
+    list.governorId = _governorId;
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
     list.arbitratorExtraDataId = _arbitratorExtraDataId;
-    emit ListCreated(_governor, _requiredStake, _removalPeriod, _arbitratorExtraDataId);
+    emit ListCreated(_governorId, _requiredStake, _removalPeriod, _arbitratorExtraDataId);
     emit MetaEvidence(listId, _metaEvidence);
   }
 
   /**
    * @dev Updates an existing list. Can only be called by its governor.
    * @param _listId Id of the list to be updated.
-   * @param _governor Address of the new governor.
+   * @param _governorId Id of the new governor.
    * @param _requiredStake Cint32 version of the new required stake per item.
    * @param _removalPeriod Seconds until item is considered removed after starting removal.
    * @param _arbitratorExtraDataId Id of the new arbitrator extra data
@@ -231,19 +231,19 @@ contract StakeCurate is IArbitrable, IEvidence {
    */
   function updateList(
     uint64 _listId,
-    address _governor,
+    uint64 _governorId,
     uint32 _requiredStake,
     uint32 _removalPeriod,
-    uint32 _arbitratorExtraDataId,
+    uint64 _arbitratorExtraDataId,
     string calldata _metaEvidence
   ) external {
     List storage list = lists[_listId];
-    require(list.governor == msg.sender, "Only governor can update list");
-    list.governor = _governor;
+    require(accounts[list.governorId].wallet == msg.sender, "Only governor can update list");
+    list.governorId = _governorId;
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
     list.arbitratorExtraDataId = _arbitratorExtraDataId;
-    emit ListUpdated(_listId, _governor, _requiredStake, _removalPeriod, _arbitratorExtraDataId);
+    emit ListUpdated(_listId, _governorId, _requiredStake, _removalPeriod, _arbitratorExtraDataId);
     emit MetaEvidence(_listId, _metaEvidence);
   }
 
