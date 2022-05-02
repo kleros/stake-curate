@@ -209,7 +209,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 _arbitratorExtraDataId,
     string calldata _metaEvidence
   ) external {
-    //require(accounts[_governorId].wallet == msg.sender, "Governor must exist and be the function caller");
+    require(_governorId < accountCount, "Governor must exist");
     uint64 listId = listCount++;
     List storage list = lists[listId];
     list.governorId = _governorId;
@@ -237,6 +237,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 _arbitratorExtraDataId,
     string calldata _metaEvidence
   ) external {
+    require(_governorId < accountCount, "Governor must exist");
     List storage list = lists[_listId];
     require(accounts[list.governorId].wallet == msg.sender, "Only governor can update list");
     list.governorId = _governorId;
