@@ -173,6 +173,20 @@ describe("Stake Curate", async () => {
       await expect(stakeCurate.connect(interloper).updateList(...args))
         .to.be.revertedWith("Only governor can update list")
     })
+
+    it("Cannot create or update a list with a governorId that doesn't exist", async () => {
+      await stakeCurate.connect(governor).createAccount({value: 500})
+      // governorId, requiredStake, removalPeriod, arbitratorExtraDataId, metaEvidence
+      const argsCreate = [1, 100, LIST_REMOVAL_PERIOD, 0, "list_policy"]
+      await expect(stakeCurate.connect(deployer).createList(...argsCreate))
+      .to.be.revertedWith("Account must exist")
+      await stakeCurate.connect(deployer).createList(0, 100, LIST_REMOVAL_PERIOD, 0, "list_policy")
+      // listId, governorId, requiredStake, removalPeriod, arbitratorExtraDataId, ipfsUri
+      const argsUpdate = [0, 1, 100, LIST_REMOVAL_PERIOD, 0, "list_policy"]
+      await expect(stakeCurate.connect(interloper).updateList(...argsUpdate))
+        .to.be.revertedWith("Account must exist")
+    })
+    
   })
 
   describe("items...", () => {
