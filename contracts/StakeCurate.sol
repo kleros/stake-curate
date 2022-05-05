@@ -100,19 +100,19 @@ contract StakeCurate is IArbitrable, IEvidence {
   // only one arbitrator per contract. changing arbitrator requires redeployment
   IArbitrator internal immutable arbitrator;
 
-  uint64 internal listCount;
-  uint64 internal accountCount;
+  uint64 public listCount;
+  uint64 public accountCount;
   /// @dev Using 32 bits to index arbitratorExtraDatas is susceptible to overflow spam
   /// Either increase bits or limit creating arbitratorExtraDatas to governor
   /// Increasing to 48 bits looks doable without much refactoring and keeping structs fit.
   uint32 internal arbitratorExtraDataCount;
 
-  mapping(uint64 => Account) internal accounts;
-  mapping(uint64 => List) internal lists;
-  mapping(uint64 => Item) internal items;
-  mapping(uint64 => DisputeSlot) internal disputes;
-  mapping(uint256 => uint64) internal disputeIdToDisputeSlot;
-  mapping(uint64 => bytes) internal arbitratorExtraDataMap;
+  mapping(uint64 => Account) public accounts;
+  mapping(uint64 => List) public lists;
+  mapping(uint64 => Item) public items;
+  mapping(uint64 => DisputeSlot) public disputes;
+  mapping(uint256 => uint64) public disputeIdToDisputeSlot;
+  mapping(uint64 => bytes) public arbitratorExtraDataMap;
 
   /** @dev Constructs the StakeCurate contract.
    *  @param _arbitrator The address of the arbitrator.

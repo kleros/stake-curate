@@ -1,4 +1,4 @@
-import { use, expect } from "chai"
+import { use, expect, assert } from "chai"
 import { ethers } from "hardhat"
 import { waffleChai } from "@ethereum-waffle/chai"
 import { Bytes, Contract, Signer } from "ethers"
@@ -320,6 +320,15 @@ describe("Stake Curate", async () => {
       await stakeCurate.connect(challenger).challengeItem(0, 0, 0, IPFS_URI, {value: CHALLENGE_FEE})
       await expect(stakeCurate.connect(deployer).recommitItem(0))
         .to.be.revertedWith("ItemSlot must be Used")
+    })
+
+    it("harddata can be read", async () => {
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
+      const item = await stakeCurate.connect(deployer).items(0)
+      assert(item.harddata === "0x")
+      await stakeCurate.connect(deployer).addItem(1, 0, 0, IPFS_URI, "0x1234")
+      const item2 = await stakeCurate.connect(deployer).items(1)
+      assert(item2.harddata === "0x1234")
     })
   })
 
