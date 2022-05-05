@@ -85,6 +85,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ItemAdded(uint64 _itemSlot, uint64 _listId, uint64 _accountId, string _ipfsUri,
     bytes _harddata
   );
+  event ItemEdited(uint64 _itemSlot, string _ipfsUri, bytes _harddata);
   event ItemStartRemoval(uint64 _itemSlot);
   event ItemStopRemoval(uint64 _itemSlot);
   // there's no need for "ItemRemoved", since it will automatically be considered removed after the period.
@@ -286,6 +287,25 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.harddata = _harddata;
 
     emit ItemAdded(itemSlot, _listId, _accountId, _ipfsUri, _harddata);
+  }
+
+  function editItem(
+    uint64 _itemSlot,
+    string calldata _ipfsUri,
+    bytes calldata _harddata
+  ) external {
+    Item storage item = items[_itemSlot];
+    Account memory account = accounts[item.accountId];
+    require(account.wallet == msg.sender, "Only account owner can invoke account");
+    require(!item.removing, "Item is being removed");
+    require(item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
+    uint256 freeStake = Cint32.decompress(account.fullStake) - Cint32.decompress(account.lockedStake);
+    List memory list = lists[item.listId];
+    require(freeStake >= Cint32.decompress(list.requiredStake), "Cannot afford to edit this item");
+    
+    item.harddata = _harddata;
+
+    emit ItemEdited(_itemSlot, _ipfsUri, _harddata);
   }
 
   /**

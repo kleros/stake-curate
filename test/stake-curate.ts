@@ -330,6 +330,20 @@ describe("Stake Curate", async () => {
       const item2 = await stakeCurate.connect(deployer).items(1)
       assert(item2.harddata === "0x1234")
     })
+
+    it("Edit an item", async () => {
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
+      await expect(stakeCurate.connect(deployer).editItem(0, IPFS_URI, noBytes))
+        .to.emit(stakeCurate, "ItemEdited")
+        .withArgs(0, IPFS_URI, noBytes)
+      const item = await stakeCurate.connect(deployer).items(0)
+      assert(item.harddata == "0x")
+      await expect(stakeCurate.connect(deployer).editItem(0, IPFS_URI, "0x1234"))
+        .to.emit(stakeCurate, "ItemEdited")
+        .withArgs(0, IPFS_URI, "0x1234")
+      const item2 = await stakeCurate.connect(deployer).items(0)
+      assert(item2.harddata == "0x1234")
+    })
   })
 
   describe("adopts...", () => {
