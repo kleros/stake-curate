@@ -63,9 +63,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     // ----
     address challenger;
     uint64 itemSlot;
-    uint64 arbitratorExtraDataId; // make sure arbitratorExtraData doesn't change
-    // ----
     DisputeState state;
+    uint24 freespace;
+    // ----
   }
 
   // ----- EVENTS -----
@@ -416,7 +416,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       itemSlot: _itemSlot,
       challenger: msg.sender,
       state: DisputeState.Used,
-      arbitratorExtraDataId: list.arbitratorExtraDataId
+      freespace: 0
     });
 
     emit ItemChallenged(_itemSlot, disputeSlot);
