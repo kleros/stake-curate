@@ -1,7 +1,7 @@
 import { use, expect } from "chai"
 import { ethers } from "hardhat"
 import { waffleChai } from "@ethereum-waffle/chai"
-import { Contract, Signer } from "ethers"
+import { Bytes, Contract, Signer } from "ethers"
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers"
 
 use(waffleChai)
@@ -31,6 +31,7 @@ describe("Stake Curate", async () => {
 
   // to get realistic gas costs
   const IPFS_URI = "/ipfs/Qme7ss3ARVgxv6rXqVPiikMJ8u2NLgmgszg13pYrDKEoiu/item.json"
+  const noBytes: Bytes = []
 
   describe("account, withdraws...", () => {
     let [deployer, challenger, interloper, governor, hobo, adopter]: SignerWithAddress[] = []
@@ -200,14 +201,14 @@ describe("Stake Curate", async () => {
     })
 
     it("Adds an item", async () => {
-      const args = [0, 0, 0, IPFS_URI] // fromItemSlot, listId, accountId, ipfsUri
+      const args = [0, 0, 0, IPFS_URI, noBytes] // fromItemSlot, listId, accountId, ipfsUri, harddata
       await expect(stakeCurate.connect(deployer).addItem(...args))
         .to.emit(stakeCurate, "ItemAdded")
         .withArgs(...args)
     })
 
     it("An item added to a taken slot goes to the next free slot", async () => {
-      const args = [0, 0, 0, IPFS_URI] // fromItemSlot, listId, accountId, ipfsUri
+      const args = [0, 0, 0, IPFS_URI, noBytes] // fromItemSlot, listId, accountId, ipfsUri, harddata
       await stakeCurate.connect(deployer).addItem(...args)
       await expect(stakeCurate.connect(deployer).addItem(...args))
         .to.emit(stakeCurate, "ItemAdded")
@@ -215,7 +216,7 @@ describe("Stake Curate", async () => {
     })
 
     it("Interloper cannot add an item", async () => {
-      const args = [0, 0, 0, IPFS_URI] // fromItemSlot, listId, accountId, ipfsUri
+      const args = [0, 0, 0, IPFS_URI, noBytes] // fromItemSlot, listId, accountId, ipfsUri, harddata
       await expect(stakeCurate.connect(interloper).addItem(...args))
         .to.be.revertedWith("Only account owner can invoke account")
     })
@@ -225,14 +226,14 @@ describe("Stake Curate", async () => {
       const updateListArgs = [0, 1, 2000, 60, 0, IPFS_URI]
       await stakeCurate.connect(governor).updateList(...updateListArgs)
 
-      const addItemArgs = [0, 0, 0, IPFS_URI] // fromItemSlot, listId, accountId, ipfsUri
+      const addItemArgs = [0, 0, 0, IPFS_URI, noBytes] // fromItemSlot, listId, accountId, ipfsUri, harddata
       await expect(stakeCurate.connect(deployer).addItem(...addItemArgs))
       .to.be.revertedWith("Not enough free stake")
     })
 
     it("You can start removing an item", async () => {
       const args = [0] // itemSlot
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
       await expect(stakeCurate.connect(deployer).startRemoveItem(...args))
         .to.emit(stakeCurate, "ItemStartRemoval")
         .withArgs(...args)
@@ -240,7 +241,7 @@ describe("Stake Curate", async () => {
 
     it("You can cancel the removal of an item", async () => {
       const args = [0] // itemSlot
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
       await stakeCurate.connect(deployer).startRemoveItem(...args)
       await expect(stakeCurate.connect(deployer).cancelRemoveItem(...args))
         .to.emit(stakeCurate, "ItemStopRemoval")
@@ -249,14 +250,14 @@ describe("Stake Curate", async () => {
 
     it("Interloper cannot start removal of an item", async () => {
       const args = [0] // itemSlot
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
       await expect(stakeCurate.connect(interloper).startRemoveItem(...args))
         .to.be.revertedWith("Only account owner can invoke account")
     })
 
     it("Interloper cannot cancel removal of an item", async () => {
       const removeArgs = [0] // itemSlot
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
       await expect(stakeCurate.connect(deployer).startRemoveItem(...removeArgs))
         .to.emit(stakeCurate, "ItemStartRemoval")
         .withArgs(...removeArgs)
@@ -268,15 +269,15 @@ describe("Stake Curate", async () => {
 
     it("You cannot request removal of an item already being removed", async () => {
       const args = [0] // itemSlot
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
       await stakeCurate.connect(deployer).startRemoveItem(...args)
       await expect(stakeCurate.connect(deployer).startRemoveItem(...args))
         .to.be.revertedWith("Item is already being removed")
     })
 
     it("You can add an item into a removed slot", async () => {
-      const args = [0, 0, 0, IPFS_URI] // fromItemSlot, listId, accountId, ipfsUri
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
+      const args = [0, 0, 0, IPFS_URI, noBytes] // fromItemSlot, listId, accountId, ipfsUri, harddata
+      await stakeCurate.connect(deployer).addItem(...args)
       await stakeCurate.connect(deployer).startRemoveItem(0)
       await ethers.provider.send("evm_increaseTime", [LIST_REMOVAL_PERIOD + 1])
       await expect(stakeCurate.connect(deployer).addItem(...args))
@@ -285,7 +286,7 @@ describe("Stake Curate", async () => {
     })
 
     it("Cannot recommit item that's being removed", async () => {
-      await stakeCurate.connect(deployer).addItem(50, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(50, 0, 0, IPFS_URI, noBytes)
       await stakeCurate.connect(deployer).startRemoveItem(50)
       await expect(stakeCurate.connect(deployer).recommitItem(50))
         .to.be.revertedWith("Item is being removed")
@@ -293,14 +294,14 @@ describe("Stake Curate", async () => {
 
     it("Cannot recommit without enough", async () => {
       await stakeCurate.connect(hobo).createAccount({value: 100}) // acc Id: 2
-      await stakeCurate.connect(hobo).addItem(0, 0, 2, IPFS_URI)
+      await stakeCurate.connect(hobo).addItem(0, 0, 2, IPFS_URI, noBytes)
       await stakeCurate.connect(governor).updateList(0, 1, 200, 3_600, 0, IPFS_URI)
       await expect(stakeCurate.connect(hobo).recommitItem(0))
         .to.be.revertedWith("Not enough to recommit item")
     })
 
     it("Recommit the stake of an item", async () => {
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
       // governor, requiredStake, removalPeriod, arbitratorExtraDataId, ipfsUri
       await stakeCurate.connect(governor).updateList(0, 1, 200, LIST_REMOVAL_PERIOD, 0, IPFS_URI)
 
@@ -315,7 +316,7 @@ describe("Stake Curate", async () => {
     })
 
     it("Cannot recommit in non-Used ItemSlot", async () => {
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
       await stakeCurate.connect(challenger).challengeItem(0, 0, 0, IPFS_URI, {value: CHALLENGE_FEE})
       await expect(stakeCurate.connect(deployer).recommitItem(0))
         .to.be.revertedWith("ItemSlot must be Used")
@@ -333,7 +334,7 @@ describe("Stake Curate", async () => {
     })
 
     it("Cannot adopt item if slot is not Used", async () => {
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
       await stakeCurate.connect(adopter).createAccount({value: 500})
       await stakeCurate.connect(challenger).challengeItem(0, 0, 0, IPFS_URI, {value: CHALLENGE_FEE})
       await expect(stakeCurate.connect(adopter).adoptItem(0, 2))
@@ -342,21 +343,21 @@ describe("Stake Curate", async () => {
 
     it("Cannot adopt if item is not adoptable", async () => {
       await stakeCurate.connect(adopter).createAccount({value: 500})
-      await stakeCurate.connect(deployer).addItem(104, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(104, 0, 0, IPFS_URI, noBytes)
       await expect(stakeCurate.connect(adopter).adoptItem(104, 2))
         .to.be.revertedWith("Item is not in adoption")
     })
 
     it("Cannot adopt in another account's name", async () => {
       await stakeCurate.connect(interloper).createAccount({value: 500})
-      await stakeCurate.connect(deployer).addItem(105, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(105, 0, 0, IPFS_URI, noBytes)
       await expect(stakeCurate.connect(interloper).adoptItem(105, 0))
         .to.be.revertedWith("Only adopter owner can adopt")
     })
 
     it("Can adopt item whose committed is under required", async () => {
       await stakeCurate.connect(adopter).createAccount({value: 500})
-      await stakeCurate.connect(deployer).addItem(102, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(102, 0, 0, IPFS_URI, noBytes)
       await stakeCurate.connect(governor).updateList(0, 1, 200, 3_600, 0, IPFS_URI)
       await expect(stakeCurate.connect(adopter).adoptItem(102, 2))
         .to.emit(stakeCurate, "ItemAdopted")
@@ -366,7 +367,7 @@ describe("Stake Curate", async () => {
     it("Can adopt item whose account has free stake under required", async () => {
       await stakeCurate.connect(adopter).createAccount({value: 500})
       await stakeCurate.connect(hobo).createAccount({value: 500})
-      await stakeCurate.connect(hobo).addItem(103, 0, 3, IPFS_URI)
+      await stakeCurate.connect(hobo).addItem(103, 0, 3, IPFS_URI, noBytes)
       await stakeCurate.connect(hobo).startWithdrawAccount(3)
       await ethers.provider.send("evm_increaseTime", [ACCOUNT_WITHDRAW_PERIOD + 1])
       await stakeCurate.connect(hobo).withdrawAccount(3, 500)
@@ -378,7 +379,7 @@ describe("Stake Curate", async () => {
     it("Can adopt item in removal", async () => {
       // make acc for adopter
       await stakeCurate.connect(adopter).createAccount({value: 500})
-      await stakeCurate.connect(deployer).addItem(100, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(100, 0, 0, IPFS_URI, noBytes)
       await stakeCurate.connect(deployer).startRemoveItem(100)
       await expect(stakeCurate.connect(adopter).adoptItem(100, 2))
         .to.emit(stakeCurate, "ItemAdopted")
@@ -388,7 +389,7 @@ describe("Stake Curate", async () => {
     it("Can adopt item whose account is withdrawing", async () => {
       // make acc for adopter
       await stakeCurate.connect(adopter).createAccount({value: 500})
-      await stakeCurate.connect(deployer).addItem(101, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(101, 0, 0, IPFS_URI, noBytes)
       await stakeCurate.connect(deployer).startWithdrawAccount(0)
       await expect(stakeCurate.connect(adopter).adoptItem(101, 2))
         .to.emit(stakeCurate, "ItemAdopted")
@@ -407,7 +408,7 @@ describe("Stake Curate", async () => {
       await stakeCurate.connect(deployer).createAccount({ value: 400 })
       await stakeCurate.connect(governor).createAccount({ value: 200 })
       await stakeCurate.connect(deployer).createList(1, 100, LIST_REMOVAL_PERIOD, 0, IPFS_URI)
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
     })
 
     it("You can challenge an item", async () => {
@@ -460,7 +461,7 @@ describe("Stake Curate", async () => {
     it("Challenging to a taken slot goes to next valid slot", async () => {
       const args = [1, 0, 0, IPFS_URI] // itemSlot, disputeSlot, minAmount, reason
       const value = CHALLENGE_FEE
-      await stakeCurate.connect(deployer).addItem(1, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(1, 0, 0, IPFS_URI, noBytes)
       await stakeCurate.connect(challenger).challengeItem(0, 0, 0, IPFS_URI, { value })
       await expect(stakeCurate.connect(challenger).challengeItem(...args, { value }))
         .to.emit(stakeCurate, "ItemChallenged").withArgs(1, 1) // itemSlot, disputeSlot
@@ -507,7 +508,7 @@ describe("Stake Curate", async () => {
         .to.emit(stakeCurate, "Ruling")
         .withArgs(arbitrator.address, 0, 2)
 
-      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI)
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
       await expect(stakeCurate.connect(challenger).challengeItem(0, 0, 0, IPFS_URI, { value }))
         .to.emit(stakeCurate, "ItemChallenged")
     })
@@ -530,9 +531,9 @@ describe("Stake Curate", async () => {
         .withArgs(arbitrator.address, 0, 1)
 
       // check if slot is overwritten (it shouldn't since item won dispute)
-      await expect(stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI))
+      await expect(stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes))
         .to.emit(stakeCurate, "ItemAdded")
-        .withArgs(1, 0, 0, IPFS_URI)
+        .withArgs(1, 0, 0, IPFS_URI, noBytes)
     })
 
     it("Unsuccessful dispute on removing item makes item renew removalTimestamp", async () => {
@@ -546,14 +547,14 @@ describe("Stake Curate", async () => {
         .withArgs(arbitrator.address, 0, 0)
       // shouldn't been removed yet (since it reset), so adding gets into the next available slot
       await ethers.provider.send("evm_increaseTime", [LIST_REMOVAL_PERIOD/2 + 1])
-      await expect(stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI))
+      await expect(stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes))
         .to.emit(stakeCurate, "ItemAdded")
-        .withArgs(1, 0, 0, IPFS_URI)
+        .withArgs(1, 0, 0, IPFS_URI, noBytes)
       // should've been removed, so adding gets there
       await ethers.provider.send("evm_increaseTime", [LIST_REMOVAL_PERIOD/2 + 1])
-      await expect(stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI))
+      await expect(stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes))
         .to.emit(stakeCurate, "ItemAdded")
-        .withArgs(0, 0, 0, IPFS_URI)
+        .withArgs(0, 0, 0, IPFS_URI, noBytes)
     })
   })
 })
