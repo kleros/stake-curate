@@ -55,6 +55,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     ItemSlotState slotState;
     uint32 submissionTimestamp; // only used to make evidenceGroupId
     uint16 freespace; // you could hold bounties here?
+    bytes harddata;
   }
 
   struct DisputeSlot {
@@ -81,7 +82,9 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ListUpdated(uint64 _listId, uint64 _governorId, uint32 _requiredStake,
     uint32 _removalPeriod, uint64 _arbitratorExtraDataId);
 
-  event ItemAdded(uint64 _itemSlot, uint64 _listId, uint64 _accountId, string _ipfsUri);
+  event ItemAdded(uint64 _itemSlot, uint64 _listId, uint64 _accountId, string _ipfsUri,
+    bytes _harddata
+  );
   event ItemStartRemoval(uint64 _itemSlot);
   event ItemStopRemoval(uint64 _itemSlot);
   // there's no need for "ItemRemoved", since it will automatically be considered removed after the period.
@@ -97,19 +100,19 @@ contract StakeCurate is IArbitrable, IEvidence {
   // only one arbitrator per contract. changing arbitrator requires redeployment
   IArbitrator internal immutable arbitrator;
 
-  uint64 internal listCount;
-  uint64 internal accountCount;
+  uint64 public listCount;
+  uint64 public accountCount;
   /// @dev Using 32 bits to index arbitratorExtraDatas is susceptible to overflow spam
   /// Either increase bits or limit creating arbitratorExtraDatas to governor
   /// Increasing to 48 bits looks doable without much refactoring and keeping structs fit.
   uint32 internal arbitratorExtraDataCount;
 
-  mapping(uint64 => Account) internal accounts;
-  mapping(uint64 => List) internal lists;
-  mapping(uint64 => Item) internal items;
-  mapping(uint64 => DisputeSlot) internal disputes;
-  mapping(uint256 => uint64) internal disputeIdToDisputeSlot;
-  mapping(uint64 => bytes) internal arbitratorExtraDataMap;
+  mapping(uint64 => Account) public accounts;
+  mapping(uint64 => List) public lists;
+  mapping(uint64 => Item) public items;
+  mapping(uint64 => DisputeSlot) public disputes;
+  mapping(uint256 => uint64) public disputeIdToDisputeSlot;
+  mapping(uint64 => bytes) public arbitratorExtraDataMap;
 
   /** @dev Constructs the StakeCurate contract.
    *  @param _arbitrator The address of the arbitrator.
@@ -254,12 +257,14 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _listId Id of the list the item will be included in
    * @param _accountId Id of the account owning the item.
    * @param _ipfsUri IPFS uri that links to the content of the item
+   * @param _harddata Optional data that is stored on-chain
    */
   function addItem(
     uint64 _fromItemSlot,
     uint64 _listId,
     uint64 _accountId,
-    string calldata _ipfsUri
+    string calldata _ipfsUri,
+    bytes calldata _harddata
   ) external {
     uint64 itemSlot = firstFreeItemSlot(_fromItemSlot);
     Account memory account = accounts[_accountId];
@@ -278,8 +283,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.removingTimestamp = 0;
     item.removing = false;
     item.submissionTimestamp = uint32(block.timestamp);
+    item.harddata = _harddata;
 
-    emit ItemAdded(itemSlot, _listId, _accountId, _ipfsUri);
+    emit ItemAdded(itemSlot, _listId, _accountId, _ipfsUri, _harddata);
   }
 
   /**
