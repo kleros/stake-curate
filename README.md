@@ -11,15 +11,15 @@ A contract to allow submitting items into lists. These items have some amount of
 
 Clone the repo, then run:
 
-`npm i`
+`yarn`
 
 Run tests with:
 
-`npm test`
+`yarn test`
 
 If you want to see gas costs, do:
 
-`npm run test:gas`
+`yarn test:gas`
 
 Check the size of the contracts:
 
