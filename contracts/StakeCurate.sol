@@ -126,7 +126,8 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /// @dev Creates an account and starts it with funds dependent on value
   function createAccount() external payable {
-    Account storage account = accounts[accountCount++];
+    Account storage account = accounts[accountCount];
+    unchecked {accountCount++;}
     account.wallet = msg.sender;
     account.fullStake = Cint32.compress(msg.value);
     emit AccountCreated();
@@ -137,10 +138,12 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _accountId The id of the account to fund. Doesn't have to belong to sender.
    */
   function fundAccount(uint64 _accountId) external payable {
-    Account storage account = accounts[_accountId];
-    uint256 fullStake = Cint32.decompress(account.fullStake) + msg.value;
-    account.fullStake = Cint32.compress(fullStake);
-    emit AccountFunded(_accountId, fullStake);
+    unchecked {
+      Account storage account = accounts[_accountId];
+      uint256 fullStake = Cint32.decompress(account.fullStake) + msg.value;
+      account.fullStake = Cint32.compress(fullStake);
+      emit AccountFunded(_accountId, fullStake);
+    }
   }
 
   /**
@@ -161,21 +164,23 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _amount The amount to be withdrawn.
    */
   function withdrawAccount(uint64 _accountId, uint256 _amount) external {
-    Account storage account = accounts[_accountId];
-    require(account.wallet == msg.sender, "Only account owner can invoke account");
-    uint32 timestamp = account.withdrawingTimestamp;
-    require(timestamp != 0, "Withdrawal didn't start");
-    require(timestamp + ACCOUNT_WITHDRAW_PERIOD <= block.timestamp, "Withdraw period didn't pass");
-    uint256 fullStake = Cint32.decompress(account.fullStake);
-    uint256 lockedStake = Cint32.decompress(account.lockedStake);
-    uint256 freeStake = fullStake - lockedStake;
-    require(freeStake >= _amount, "You can't afford to withdraw that much");
-    // Initiate withdrawal
-    uint256 newStake = fullStake - _amount;
-    account.fullStake = Cint32.compress(newStake);
-    account.withdrawingTimestamp = 0;
-    payable(account.wallet).send(_amount);
-    emit AccountWithdrawn(_accountId, _amount);
+    unchecked {
+      Account storage account = accounts[_accountId];
+      require(account.wallet == msg.sender, "Only account owner can invoke account");
+      uint32 timestamp = account.withdrawingTimestamp;
+      require(timestamp != 0, "Withdrawal didn't start");
+      require(timestamp + ACCOUNT_WITHDRAW_PERIOD <= block.timestamp, "Withdraw period didn't pass");
+      uint256 fullStake = Cint32.decompress(account.fullStake);
+      uint256 lockedStake = Cint32.decompress(account.lockedStake);
+      uint256 freeStake = fullStake - lockedStake; // we needed to decompress fullstake anyway
+      require(freeStake >= _amount, "You can't afford to withdraw that much");
+      // Initiate withdrawal
+      uint256 newStake = fullStake - _amount;
+      account.fullStake = Cint32.compress(newStake);
+      account.withdrawingTimestamp = 0;
+      payable(account.wallet).send(_amount);
+      emit AccountWithdrawn(_accountId, _amount);
+    }
   }
 
   /**
@@ -214,7 +219,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     string calldata _metaEvidence
   ) external {
     require(_governorId < accountCount, "Account must exist");
-    uint64 listId = listCount++;
+    uint64 listId = listCount;
+    unchecked {listCount++;}
     List storage list = lists[listId];
     list.governorId = _governorId;
     list.requiredStake = _requiredStake;
@@ -273,7 +279,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[itemSlot];
     List storage list = lists[_listId];
     uint32 compressedRequiredStake = list.requiredStake;
-    uint256 freeStake = Cint32.decompress(account.fullStake) - Cint32.decompress(account.lockedStake);
+    uint256 freeStake = getFreeStake(account);
     uint256 requiredStake = Cint32.decompress(compressedRequiredStake);
     require(freeStake >= requiredStake, "Not enough free stake");
     // Item can be submitted
@@ -299,7 +305,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(account.wallet == msg.sender, "Only account owner can invoke account");
     require(!item.removing, "Item is being removed");
     require(item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
-    uint256 freeStake = Cint32.decompress(account.fullStake) - Cint32.decompress(account.lockedStake);
+    uint256 freeStake = getFreeStake(account);
     List memory list = lists[item.listId];
     require(freeStake >= Cint32.decompress(list.requiredStake), "Cannot afford to edit this item");
     
@@ -355,7 +361,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(adopter.wallet == msg.sender, "Only adopter owner can adopt");
     require(item.slotState == ItemSlotState.Used, "Item slot must be Used");
     require(itemIsInAdoption(item, list, account), "Item is not in adoption");
-    uint256 freeStake = Cint32.decompress(adopter.fullStake) - Cint32.decompress(adopter.lockedStake);
+    uint256 freeStake = getFreeStake(adopter);
     require(Cint32.decompress(list.requiredStake) <= freeStake, "Cannot afford adopting this item");
 
     item.accountId = _adopterId;
@@ -380,7 +386,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(!itemIsFree(item, list) && item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
     require(!item.removing, "Item is being removed");
     
-    uint256 freeStake = Cint32.decompress(account.fullStake) - Cint32.decompress(account.lockedStake);
+    uint256 freeStake = getFreeStake((account));
     require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough to recommit item");
 
     item.committedStake = list.requiredStake;
@@ -410,7 +416,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Account storage account = accounts[item.accountId];
     
     require(itemCanBeChallenged(item, list), "Item cannot be challenged");
-    uint256 freeStake = Cint32.decompress(account.fullStake) - Cint32.decompress(account.lockedStake);
+    uint256 freeStake = getFreeStake(account);
     require(_minAmount <= freeStake, "Not enough free stake to satisfy minAmount");
 
     // All requirements met, begin
@@ -429,8 +435,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     // if you don't stop the removal, the opposite happens. submitter can make dofus disputes until making the removal period
     item.removingTimestamp = 0;
     item.committedStake = Cint32.compress(comittedAmount);
-    account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) + comittedAmount);
-
+    unchecked {
+      account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) + comittedAmount);
+    }
     disputes[disputeSlot] = DisputeSlot({
       arbitratorDisputeId: arbitratorDisputeId,
       itemSlot: _itemSlot,
@@ -487,8 +494,10 @@ contract StakeCurate is IArbitrable, IEvidence {
       item.slotState = ItemSlotState.Used;
       // free the locked stake
       uint256 lockedAmount = Cint32.decompress(account.lockedStake);
-      uint256 updatedLockedAmount = lockedAmount - Cint32.decompress(item.committedStake);
-      account.lockedStake = Cint32.compress(updatedLockedAmount);
+      unchecked {
+        uint256 updatedLockedAmount = lockedAmount - Cint32.decompress(item.committedStake);
+        account.lockedStake = Cint32.compress(updatedLockedAmount);
+      }
     } else {
       // challenger won.
       // 4b. slot is now Free
@@ -509,7 +518,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   function firstFreeDisputeSlot(uint64 _fromSlot) internal view returns (uint64) {
     uint64 i = _fromSlot;
     while (disputes[i].state != DisputeState.Free) {
-      i++;
+      unchecked {i++;}
     }
     return i;
   }
@@ -519,7 +528,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item memory item = items[i];
     List memory list = lists[item.listId];
     while (!itemIsFree(item, list)) {
-      i++;
+      unchecked {i++;}
       item = items[i];
       list = lists[item.listId];
     }
@@ -527,9 +536,11 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   function itemIsFree(Item memory _item, List memory _list) internal view returns (bool) {
-    bool notInUse = _item.slotState == ItemSlotState.Free;
-    bool removed = _item.removing && _item.removingTimestamp + _list.removalPeriod <= block.timestamp;
-    return (notInUse || removed);
+    unchecked {
+      bool notInUse = _item.slotState == ItemSlotState.Free;
+      bool removed = _item.removing && _item.removingTimestamp + _list.removalPeriod <= block.timestamp;
+      return (notInUse || removed);
+    }
   }
 
   function itemCanBeChallenged(Item memory _item, List memory _list) internal view returns (bool) {
@@ -547,8 +558,14 @@ contract StakeCurate is IArbitrable, IEvidence {
     bool beingRemoved = _item.removing;
     bool accountWithdrawing = _account.withdrawingTimestamp != 0;
     bool committedUnderRequired = Cint32.decompress(_item.committedStake) < Cint32.decompress(_list.requiredStake);
-    uint256 freeStake = Cint32.decompress(_account.fullStake) - Cint32.decompress(_account.lockedStake);
+    uint256 freeStake = getFreeStake(_account);
     bool notEnoughFreeStake = freeStake < Cint32.decompress(_list.requiredStake);
     return (beingRemoved || accountWithdrawing || committedUnderRequired || notEnoughFreeStake);
+  }
+
+  function getFreeStake(Account memory _account) internal pure returns (uint256) {
+    unchecked {
+      return(Cint32.decompress(_account.fullStake) - Cint32.decompress(_account.lockedStake));
+    }
   }
 }
