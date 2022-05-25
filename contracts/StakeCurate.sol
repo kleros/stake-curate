@@ -401,8 +401,8 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _minAmount Frontrunning protection due to this edge case:
    * Submitter frontruns submitting a wrong item, and challenges himself to lock himself out of
    * funds, so that his free stake is lower than whatever he has committed or is the requirement
-   * of the list. Possibly unneeded in OR. Also, it doesn't protect fully anyway, since submitter
-   * could challenge himself out of 99% of his funds. I'm open to remove it.
+   * of the list. This way, challenger can verify that a desirable amount of funds will be obtained
+   * by challenging, with his transaction reverting otherwise, protecting from loss. 
    * @param _reason IPFS uri containing the evidence for the challenge.
    */
   function challengeItem(
