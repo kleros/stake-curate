@@ -344,6 +344,34 @@ describe("Stake Curate", async () => {
       const item2 = await stakeCurate.connect(deployer).items(0)
       assert(item2.harddata == "0x1234")
     })
+
+    it("Cannot edit item if not account owner", async () => {
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
+      await expect(stakeCurate.connect(interloper).editItem(0, IPFS_URI, noBytes))
+        .to.be.revertedWith("Only account owner can invoke account")
+    })
+
+    it("Cannot edit item if it's being removed", async () => {
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
+      await stakeCurate.connect(deployer).startRemoveItem(0)
+      await expect(stakeCurate.connect(deployer).editItem(0, IPFS_URI, noBytes))
+        .to.be.revertedWith("Item is being removed")
+    })
+
+    it("Cannot edit item if itemSlot is not Used (it's being disputed or was challenged out)", async () => {
+      await stakeCurate.connect(deployer).addItem(0, 0, 0, IPFS_URI, noBytes)
+      await stakeCurate.connect(challenger).challengeItem(0, 0, 0, IPFS_URI, {value: CHALLENGE_FEE})
+      await expect(stakeCurate.connect(deployer).editItem(0, IPFS_URI, noBytes))
+        .to.be.revertedWith("ItemSlot must be Used")
+
+      
+      await arbitrator.connect(deployer).giveRuling(0, 2, 3_600) // disputeId, ruling, appealWindow
+      await ethers.provider.send("evm_increaseTime", [3_600 + 1])
+      await arbitrator.connect(deployer).executeRuling(0)
+
+      await expect(stakeCurate.connect(deployer).editItem(0, IPFS_URI, noBytes))
+        .to.be.revertedWith("ItemSlot must be Used")
+    })
   })
 
   describe("adopts...", () => {
