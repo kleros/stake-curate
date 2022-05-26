@@ -103,10 +103,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   uint64 public listCount;
   uint64 public accountCount;
-  /// @dev Using 32 bits to index arbitratorExtraDatas is susceptible to overflow spam
-  /// Either increase bits or limit creating arbitratorExtraDatas to governor
-  /// Increasing to 48 bits looks doable without much refactoring and keeping structs fit.
-  uint32 internal arbitratorExtraDataCount;
+  uint64 internal arbitratorExtraDataCount;
 
   mapping(uint64 => Account) public accounts;
   mapping(uint64 => List) public lists;
