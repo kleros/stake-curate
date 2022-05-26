@@ -61,10 +61,10 @@ contract StakeCurate is IArbitrable, IEvidence {
   struct DisputeSlot {
     uint256 arbitratorDisputeId;
     // ----
-    address challenger;
+    uint64 challengerId;
     uint64 itemSlot;
     DisputeState state;
-    uint24 freespace;
+    uint120 freespace;
     // ----
   }
 
@@ -382,6 +382,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @notice Challenge an item, with the intent of removing it and obtaining a reward.
+   * @param _challengerId Id of the account challenger is challenging on behalf
    * @param _itemSlot Slot of the item to challenge.
    * @param _fromDisputeSlot DisputeSlot to start finding a place to store the dispute
    * @param _minAmount Frontrunning protection due to this edge case:
@@ -392,6 +393,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _reason IPFS uri containing the evidence for the challenge.
    */
   function challengeItem(
+    uint64 _challengerId,
     uint64 _itemSlot,
     uint64 _fromDisputeSlot,
     uint256 _minAmount,
@@ -400,6 +402,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[_itemSlot];
     List memory list = lists[item.listId];
     Account storage account = accounts[item.accountId];
+
+    // this validation is not needed for security, since the challenger is only
+    // referenced to forward the reward if challenge is won. but, it's nicer.
+    require(accounts[_challengerId].wallet == msg.sender, "Only account owner can challenge on behalf");
     
     require(itemCanBeChallenged(item, list), "Item cannot be challenged");
     uint256 freeStake = getFreeStake(account);
@@ -427,7 +433,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     disputes[disputeSlot] = DisputeSlot({
       arbitratorDisputeId: arbitratorDisputeId,
       itemSlot: _itemSlot,
-      challenger: msg.sender,
+      challengerId: _challengerId,
       state: DisputeState.Used,
       freespace: 0
     });
@@ -494,7 +500,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       account.fullStake = Cint32.compress(Cint32.decompress(account.fullStake) - amount);
       account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) - amount);
       // is it dangerous to send before the end of the function? please answer on audit
-      payable(dispute.challenger).send(amount);
+      payable(accounts[dispute.challengerId].wallet).send(amount);
     }
     dispute.state = DisputeState.Free;
     emit Ruling(arbitrator, _disputeId, _ruling);
