@@ -45,6 +45,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 requiredStake;
     uint32 removalPeriod;
     uint64 arbitrationSettingId; // arbitrationSetting cant mutate, so you reference it.
+    uint64 freespace;
   }
 
   struct Item {
@@ -77,7 +78,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // ----- EVENTS -----
 
-  event AccountCreated();
+  event AccountCreated(uint64 _accountId, address _wallet, uint256 _fullStake);
   event AccountFunded(uint64 _accountId, uint256 _fullStake);
   event AccountStartWithdraw(uint64 _accountId);
   event AccountWithdrawn(uint64 _accountId, uint256 _amount);
@@ -122,11 +123,25 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /// @dev Creates an account and starts it with funds dependent on value
   function createAccount() external payable {
+    uint64 accountId = accountCount;
     Account storage account = accounts[accountCount];
     unchecked {accountCount++;}
     account.wallet = msg.sender;
     account.fullStake = Cint32.compress(msg.value);
-    emit AccountCreated();
+    emit AccountCreated(accountId, msg.sender, msg.value);
+  }
+
+  /**
+   * @dev Creates an account for a given address and starts it with funds dependent on value.
+   * @param _wallet The address of the account you will create.
+   */
+  function createAccountForAddress(address _wallet) external payable {
+    uint64 accountId = accountCount;
+    Account storage account = accounts[accountCount];
+    unchecked {accountCount++;}
+    account.wallet = _wallet;
+    account.fullStake = Cint32.compress(msg.value);
+    emit AccountCreated(accountId, _wallet, msg.value);
   }
 
   /**

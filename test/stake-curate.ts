@@ -51,93 +51,103 @@ describe("Stake Curate", async () => {
     beforeEach("Deploying", async () => {
       [deployer, challenger, governor, interloper, hobo, adopter] = await ethers.getSigners();
       ({ arbitrator, stakeCurate } = await deployContracts(deployer))
-      await stakeCurate.connect(deployer).createAccount({ value: 100 })
     })
   
     it("Create account", async () => {
-      const args = []
       const value = 100
       // can you get value/sender out of an event that doesn't emit it?
-      await expect(stakeCurate.connect(deployer).createAccount(...args, { value }))
+      await expect(stakeCurate.connect(deployer).createAccount({ value }))
         .to.emit(stakeCurate, "AccountCreated")
+        .withArgs(deployerId, deployer.address, value)
       // get an acc for interloper too (to see the realistic account creation cost)
-      await expect(stakeCurate.connect(interloper).createAccount(...args, { value }))
+      await expect(stakeCurate.connect(interloper).createAccount({ value }))
         .to.emit(stakeCurate, "AccountCreated")
+        .withArgs(deployerId + 1, interloper.address, value)
+    })
+
+    it("Create account for a given address", async () => {
+      const value = 100
+      // can you get value/sender out of an event that doesn't emit it?
+      await expect(stakeCurate.connect(deployer).createAccountForAddress(deployer.address, { value }))
+        .to.emit(stakeCurate, "AccountCreated")
+        .withArgs(deployerId, deployer.address, value)
+      // get an acc for interloper too (to see the realistic account creation cost)
+      await expect(stakeCurate.connect(deployer).createAccountForAddress(interloper.address, { value }))
+        .to.emit(stakeCurate, "AccountCreated")
+        .withArgs(deployerId + 1, interloper.address, value)
     })
   
     it("Fund account", async () => {
-      const args = [0] // accountId = 0
-      const value = 1000
-      await expect(stakeCurate.connect(deployer).fundAccount(...args, { value }))
+      await stakeCurate.connect(deployer).createAccount({ value: 100 })
+      await expect(stakeCurate.connect(deployer).fundAccount(deployerId, { value: 1000 }))
         .to.emit(stakeCurate, "AccountFunded")
-        .withArgs(0, 1100) // accountId, fullStake
+        .withArgs(deployerId, 1100)
     })
   
     it("Reverts unprepared withdraws", async () => {
-      const args = [0, 100] // accountId = 0, amount = 100
-      await expect(stakeCurate.connect(deployer).withdrawAccount(...args))
+      const amount = 100
+      await stakeCurate.connect(deployer).createAccount({ value: amount })
+      await expect(stakeCurate.connect(deployer).withdrawAccount(deployerId, amount))
         .to.be.revertedWith("Withdrawal didn't start")
     })
   
     it("Reverts interloper withdraws", async () => {
-      const args = [0, 100] // accountId = 0, amount = 100
-      await expect(stakeCurate.connect(interloper).withdrawAccount(...args))
+      const amount = 100
+      await stakeCurate.connect(deployer).createAccount({ value: amount })
+      await expect(stakeCurate.connect(interloper).withdrawAccount(deployerId, amount))
         .to.be.revertedWith("Only account owner can invoke account")
     })
   
     it("Reverts interloper starting withdraws", async () => {
-      const args = [0] // accountId = 0
-      await expect(stakeCurate.connect(interloper).startWithdrawAccount(...args))
+      const amount = 100
+      await stakeCurate.connect(deployer).createAccount({ value: amount })
+      await expect(stakeCurate.connect(interloper).startWithdrawAccount(deployerId))
         .to.be.revertedWith("Only account owner can invoke account")
     })
   
     it("Start withdraw account", async () => {
-      const args = [0] // accountId = 0
-      await expect(stakeCurate.connect(deployer).startWithdrawAccount(...args))
+      const amount = 100
+      await stakeCurate.connect(deployer).createAccount({ value: amount })
+      await expect(stakeCurate.connect(deployer).startWithdrawAccount(deployerId))
         .to.emit(stakeCurate, "AccountStartWithdraw")
-        .withArgs(0) // accountId
+        .withArgs(deployerId)
     })
   
     it("Reverts early withdraws", async () => {
-      const args = [0, 100] // accountId = 0, amount = 100
-      await stakeCurate.connect(deployer).startWithdrawAccount(0)
+      const amount = 100
+      await stakeCurate.connect(deployer).createAccount({ value: amount })
+      await stakeCurate.connect(deployer).startWithdrawAccount(deployerId)
       
-      await expect(stakeCurate.connect(deployer).withdrawAccount(...args))
+      await expect(stakeCurate.connect(deployer).withdrawAccount(deployerId, amount))
         .to.be.revertedWith("Withdraw period didn't pass")
     })
   
-    it("Cannot withdraw more than full stake", async () => {
-      const args = [0, 2000] // accountId = 0, amount = 2000
-      await stakeCurate.connect(deployer).startWithdrawAccount(0)
+    it("Cannot withdraw more than free stake", async () => {
+      await stakeCurate.connect(deployer).createAccount({ value: 100 })
+      await stakeCurate.connect(deployer).startWithdrawAccount(deployerId)
       await ethers.provider.send("evm_increaseTime", [ACCOUNT_WITHDRAW_PERIOD + 1])
-      await expect(stakeCurate.connect(deployer).withdrawAccount(...args))
+      await expect(stakeCurate.connect(deployer).withdrawAccount(deployerId, 2000))
         .to.be.revertedWith("You can't afford to withdraw that much")
     })
   
     it("Withdraws funds", async () => {
-      const args = [0, 100] // accountId = 0, amount = 100
-      await stakeCurate.connect(deployer).startWithdrawAccount(0)
+      const amount = 100
+      await stakeCurate.connect(deployer).createAccount({ value: amount })
+      await stakeCurate.connect(deployer).startWithdrawAccount(deployerId)
       await ethers.provider.send("evm_increaseTime", [ACCOUNT_WITHDRAW_PERIOD + 1])
-      await expect(await stakeCurate.connect(deployer).withdrawAccount(...args))
+      await expect(await stakeCurate.connect(deployer).withdrawAccount(deployerId, amount))
         .to.emit(stakeCurate, "AccountWithdrawn")
-        .withArgs(...args)
-        .to.changeEtherBalance(deployer, 100)
+        .withArgs(deployerId, amount)
+        .to.changeEtherBalance(deployer, amount)
     })
   
     it("Withdrawal timestamp resets after successful withdrawal", async () => {
-      const args = [0, 100] // accountId = 0, amount = 100
-      await stakeCurate.connect(deployer).startWithdrawAccount(0)
+      await stakeCurate.connect(deployer).createAccount({ value: 200 })
+      await stakeCurate.connect(deployer).startWithdrawAccount(deployerId)
       await ethers.provider.send("evm_increaseTime", [ACCOUNT_WITHDRAW_PERIOD + 1])
-      await stakeCurate.connect(deployer).withdrawAccount(...args)
-      await expect(stakeCurate.connect(deployer).withdrawAccount(...args))
+      await stakeCurate.connect(deployer).withdrawAccount(deployerId, 100)
+      await expect(stakeCurate.connect(deployer).withdrawAccount(deployerId, 100))
         .to.be.revertedWith("Withdrawal didn't start")
-    })
-
-    it("Cannot withdraw more than free stake", async () => {
-      await stakeCurate.connect(deployer).startWithdrawAccount(0)
-      await ethers.provider.send("evm_increaseTime", [ACCOUNT_WITHDRAW_PERIOD + 1])
-      await expect(stakeCurate.connect(deployer).withdrawAccount(0, 900))
-        .to.be.revertedWith("You can't afford to withdraw that much")
     })
   })
 
