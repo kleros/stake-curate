@@ -12,8 +12,9 @@ const deployContracts = async (deployer: Signer) => {
   await arbitrator.deployed()
 
   const StakeCurate = await ethers.getContractFactory("StakeCurate", deployer)
-  const stakeCurate = await StakeCurate.deploy(arbitrator.address)
+  const stakeCurate = await StakeCurate.deploy()
   await stakeCurate.deployed()
+  await stakeCurate.connect(deployer).createArbitrationSetting(arbitrator.address, "0x")
 
   return {
     arbitrator,
@@ -39,7 +40,7 @@ describe("Stake Curate", async () => {
   const itemSlot = 0
   const minAmount = 0
   const disputeSlot = 0
-  const arbitratorExtraDataId = 0
+  const arbitratorSettingId = 0
   const addItemArgs = [itemSlot, listId, deployerId, IPFS_URI, noBytes]
   const challengeItemArgs = [challengerId, itemSlot, disputeSlot, minAmount, IPFS_URI, {value: CHALLENGE_FEE}]
 
@@ -141,63 +142,56 @@ describe("Stake Curate", async () => {
   })
 
   describe("lists...", () => {
+    const createListArgs = [governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD,
+      arbitratorSettingId, IPFS_URI
+    ]
 
     beforeEach("Deploying", async () => {
       [deployer, challenger, governor, interloper, hobo, adopter] = await ethers.getSigners();
       ({ arbitrator, stakeCurate } = await deployContracts(deployer))
+
+      await stakeCurate.connect(deployer).createAccount({value: 500})
+      await stakeCurate.connect(governor).createAccount({value: 500})
     })
 
-    it("Create arbitratorExtraData", async () => {
-      const args = ["0x00"]
-      await expect(stakeCurate.connect(deployer).createArbitratorExtraData(...args))
-        .to.emit(stakeCurate, "ArbitratorExtraDataCreated")
-        .withArgs("0x00")
+    it("Create arbitrationSetting", async () => {
+      await expect(stakeCurate.connect(deployer).createArbitrationSetting(arbitrator.address, "0x00"))
+        .to.emit(stakeCurate, "ArbitrationSettingCreated")
+        .withArgs(arbitrator.address, "0x00")
     })
 
     it("Creates a list", async () => {
-      await stakeCurate.connect(governor).createAccount({value: 500})
-      // governorId, requiredStake, removalPeriod, arbitratorExtraDataId, metaEvidence
-      const args = [0, 100, LIST_REMOVAL_PERIOD, 0, "list_policy"]
-      await expect(stakeCurate.connect(deployer).createList(...args))
+      await expect(stakeCurate.connect(deployer).createList(...createListArgs))
         .to.emit(stakeCurate, "ListCreated")
-        .withArgs(0, 100, LIST_REMOVAL_PERIOD, 0)
+        .withArgs(governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD, arbitratorSettingId)
         .to.emit(stakeCurate, "MetaEvidence")
-        .withArgs(0, "list_policy")
+        .withArgs(listId, IPFS_URI)
     })
 
     it("Updates a list", async () => {
-      await stakeCurate.connect(governor).createAccount({value: 500})
-      // listId, governorId, requiredStake, removalPeriod, arbitratorExtraDataId, metaEvidence
-      const args = [0, 0, 100, LIST_REMOVAL_PERIOD, 0, "list_policy"]
-      await stakeCurate.connect(deployer).createList(0, 100, LIST_REMOVAL_PERIOD, 0, "list_policy")
-      await expect(stakeCurate.connect(governor).updateList(...args))
+      await stakeCurate.connect(deployer).createList(...createListArgs)
+      await expect(stakeCurate.connect(governor).updateList(listId, ...createListArgs))
         .to.emit(stakeCurate, "ListUpdated")
-        .withArgs(0, 0, 100, LIST_REMOVAL_PERIOD, 0)
+        .withArgs(listId, governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD, arbitratorSettingId)
         .to.emit(stakeCurate, "MetaEvidence")
-        .withArgs(0, "list_policy")
+        .withArgs(listId, IPFS_URI)
     })
 
     it("Interloper cannot update the list", async () => {
-      await stakeCurate.connect(governor).createAccount({value: 500})
-      // listId, governorId, requiredStake, removalPeriod, arbitratorExtraDataId, ipfsUri
-      const args = [0, 0, 100, LIST_REMOVAL_PERIOD, 0, "list_policy"]
-      await expect(stakeCurate.connect(interloper).updateList(...args))
+      await stakeCurate.connect(deployer).createList(...createListArgs)
+      await expect(stakeCurate.connect(interloper).updateList(listId, ...createListArgs))
         .to.be.revertedWith("Only governor can update list")
     })
 
     it("Cannot create or update a list with a governorId that doesn't exist", async () => {
-      await stakeCurate.connect(governor).createAccount({value: 500})
-      // governorId, requiredStake, removalPeriod, arbitratorExtraDataId, metaEvidence
-      const argsCreate = [1, 100, LIST_REMOVAL_PERIOD, 0, "list_policy"]
-      await expect(stakeCurate.connect(deployer).createList(...argsCreate))
+      await expect(stakeCurate.connect(deployer).createList(100, ...createListArgs.slice(1)))
       .to.be.revertedWith("Account must exist")
-      await stakeCurate.connect(deployer).createList(0, 100, LIST_REMOVAL_PERIOD, 0, "list_policy")
-      // listId, governorId, requiredStake, removalPeriod, arbitratorExtraDataId, ipfsUri
-      const argsUpdate = [0, 1, 100, LIST_REMOVAL_PERIOD, 0, "list_policy"]
-      await expect(stakeCurate.connect(interloper).updateList(...argsUpdate))
+      await stakeCurate.connect(deployer).createList(...createListArgs)
+      const argsUpdate = [listId, 100, LIST_REQUIRED_STAKE,
+        LIST_REMOVAL_PERIOD, arbitratorSettingId, IPFS_URI]
+      await expect(stakeCurate.connect(governor).updateList(...argsUpdate))
         .to.be.revertedWith("Account must exist")
     })
-    
   })
 
   describe("items...", () => {
@@ -211,7 +205,7 @@ describe("Stake Curate", async () => {
       await stakeCurate.connect(hobo).createAccount({ value: 100 })
       await stakeCurate.connect(interloper).createAccount({ value: 200 })
       await stakeCurate.connect(deployer)
-        .createList(governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD, arbitratorExtraDataId, IPFS_URI)
+        .createList(governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD, arbitratorSettingId, IPFS_URI)
     })
 
     it("Adds an item", async () => {
@@ -235,7 +229,7 @@ describe("Stake Curate", async () => {
     it("Revert adding if not enough free stake", async () => {
       const updateListArgs = [
         listId, governorId, LIST_REQUIRED_STAKE * 100,
-        LIST_REMOVAL_PERIOD, arbitratorExtraDataId, IPFS_URI
+        LIST_REMOVAL_PERIOD, arbitratorSettingId, IPFS_URI
       ]
       await stakeCurate.connect(governor).updateList(...updateListArgs)
 
@@ -301,7 +295,7 @@ describe("Stake Curate", async () => {
       await stakeCurate.connect(hobo).addItem(itemSlot, listId, hoboId, IPFS_URI, noBytes)
       await stakeCurate.connect(governor)
         .updateList(listId, governorId, LIST_REQUIRED_STAKE * 2,
-          LIST_REMOVAL_PERIOD, arbitratorExtraDataId, IPFS_URI
+          LIST_REMOVAL_PERIOD, arbitratorSettingId, IPFS_URI
         )
       await expect(stakeCurate.connect(hobo).recommitItem(itemSlot))
         .to.be.revertedWith("Not enough to recommit item")
@@ -312,7 +306,7 @@ describe("Stake Curate", async () => {
       // governor, requiredStake, removalPeriod, arbitratorExtraDataId, ipfsUri
       await stakeCurate.connect(governor)
         .updateList(listId, governorId, LIST_REQUIRED_STAKE * 2,
-          LIST_REMOVAL_PERIOD, arbitratorExtraDataId, IPFS_URI
+          LIST_REMOVAL_PERIOD, arbitratorSettingId, IPFS_URI
         )
 
       await expect(stakeCurate.connect(deployer).recommitItem(itemSlot))
@@ -424,7 +418,7 @@ describe("Stake Curate", async () => {
       await stakeCurate.connect(deployer).addItem(...addItemArgs)
       await stakeCurate.connect(governor)
         .updateList(listId, governorId, LIST_REQUIRED_STAKE * 2,
-          LIST_REMOVAL_PERIOD, arbitratorExtraDataId, IPFS_URI
+          LIST_REMOVAL_PERIOD, arbitratorSettingId, IPFS_URI
         )
       await expect(stakeCurate.connect(adopter).adoptItem(itemSlot, adopterId))
         .to.emit(stakeCurate, "ItemAdopted")
@@ -504,7 +498,7 @@ describe("Stake Curate", async () => {
     it("You cannot challenge when committedStake < requiredStake", async () => {
       await stakeCurate.connect(governor)
         .updateList(listId, governorId, LIST_REQUIRED_STAKE * 2,
-          LIST_REMOVAL_PERIOD, arbitratorExtraDataId, IPFS_URI
+          LIST_REMOVAL_PERIOD, arbitratorSettingId, IPFS_URI
         )
       await expect(stakeCurate.connect(challenger)
         .challengeItem(...challengeItemArgs))
@@ -536,9 +530,10 @@ describe("Stake Curate", async () => {
 
     it("Submit evidence", async () => {
       await stakeCurate.connect(challenger).challengeItem(...challengeItemArgs)
-      await expect(stakeCurate.connect(deployer).submitEvidence(0, IPFS_URI))
+      // todo use block numbers instead of timestamps, then test the hash properly.
+      await expect(stakeCurate.connect(deployer).submitEvidence(0, arbitrator.address, IPFS_URI))
         .to.emit(stakeCurate, "Evidence")
-        .withArgs(arbitrator.address, 0, deployer.address, IPFS_URI)
+        //.withArgs(arbitrator.address, evidenceGroupId, deployer.address, IPFS_URI)
     })
 
     it("Rule for challenger", async () => {

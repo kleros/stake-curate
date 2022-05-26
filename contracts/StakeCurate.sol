@@ -17,7 +17,8 @@ import "./Cint32.sol";
  * @title Stake Curate
  * @author Green
  * @notice Curate with indefinitely held, capital-efficient stake.
- * @dev The stakes of the items are handled here, but the items aren't stored here.
+ * @dev The stakes of the items are handled here. Handling arbitrary on-chain data is
+ * possible, but many curation needs can be solved by keeping off-chain state availability.
  * This dapp should be reviewed taking the subgraph role into account.
  */
 contract StakeCurate is IArbitrable, IEvidence {
@@ -43,7 +44,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 governorId;
     uint32 requiredStake;
     uint32 removalPeriod;
-    uint64 arbitratorExtraDataId; // arbitratorExtraData cant mutate (because of risks during dispute)
+    uint64 arbitrationSettingId; // arbitrationSetting cant mutate, so you reference it.
   }
 
   struct Item {
@@ -63,9 +64,15 @@ contract StakeCurate is IArbitrable, IEvidence {
     // ----
     uint64 challengerId;
     uint64 itemSlot;
+    uint64 arbitrationSetting;
     DisputeState state;
-    uint120 freespace;
+    uint56 freespace;
     // ----
+  }
+
+  struct ArbitrationSetting {
+    bytes arbitratorExtraData;
+    IArbitrator arbitrator;
   }
 
   // ----- EVENTS -----
@@ -75,12 +82,12 @@ contract StakeCurate is IArbitrable, IEvidence {
   event AccountStartWithdraw(uint64 _accountId);
   event AccountWithdrawn(uint64 _accountId, uint256 _amount);
 
-  event ArbitratorExtraDataCreated(bytes _arbitratorExtraData);
+  event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
 
   event ListCreated(uint64 _governorId, uint32 _requiredStake, uint32 _removalPeriod,
-    uint64 _arbitratorExtraDataId);
+    uint64 _arbitrationSettingId);
   event ListUpdated(uint64 _listId, uint64 _governorId, uint32 _requiredStake,
-    uint32 _removalPeriod, uint64 _arbitratorExtraDataId);
+    uint32 _removalPeriod, uint64 _arbitrationSettingId);
 
   event ItemAdded(uint64 _itemSlot, uint64 _listId, uint64 _accountId, string _ipfsUri,
     bytes _harddata
@@ -96,28 +103,20 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // ----- CONTRACT STORAGE -----
 
-  // Note: This contract is vulnerable to deprecated arbitrator. Redeploying contract would mean that
-  // everyone would have to manually withdraw their stake and submit all items again in the newer version.
-  // only one arbitrator per contract. changing arbitrator requires redeployment
-  IArbitrator internal immutable arbitrator;
-
   uint64 public listCount;
   uint64 public accountCount;
-  uint64 internal arbitratorExtraDataCount;
+  uint64 public arbitrationSettingCount;
 
   mapping(uint64 => Account) public accounts;
   mapping(uint64 => List) public lists;
   mapping(uint64 => Item) public items;
   mapping(uint64 => DisputeSlot) public disputes;
-  mapping(uint256 => uint64) public disputeIdToDisputeSlot;
-  mapping(uint64 => bytes) public arbitratorExtraDataMap;
+  mapping(address => mapping(uint256 => uint64)) public arbitratorAndDisputeIdToDisputeSlot;
+  mapping(uint64 => ArbitrationSetting) public arbitrationSettings;
 
   /** @dev Constructs the StakeCurate contract.
-   *  @param _arbitrator The address of the arbitrator.
    */
-  constructor(address _arbitrator) {
-    arbitrator = IArbitrator(_arbitrator);
-  }
+  constructor() {}
 
   // ----- PUBLIC FUNCTIONS -----
 
@@ -181,12 +180,16 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   /**
-   * @dev Create arbitrator extra data. Will be assigned to an id.
+   * @dev Create arbitrator setting. Will be immutable, and assigned to an id.
+   * @param _arbitrator The address of the IArbitrator
    * @param _arbitratorExtraData The extra data
    */
-  function createArbitratorExtraData(bytes calldata _arbitratorExtraData) external {
-    arbitratorExtraDataMap[arbitratorExtraDataCount++] = _arbitratorExtraData;
-    emit ArbitratorExtraDataCreated(_arbitratorExtraData);
+  function createArbitrationSetting(address _arbitrator, bytes calldata _arbitratorExtraData) external {
+    arbitrationSettings[arbitrationSettingCount++] = ArbitrationSetting({
+      arbitrator: IArbitrator(_arbitrator),
+      arbitratorExtraData: _arbitratorExtraData
+    });
+    emit ArbitrationSettingCreated(_arbitrator, _arbitratorExtraData);
   }
 
   /**
@@ -194,25 +197,26 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _governorId The id of the governor.
    * @param _requiredStake The Cint32 version of the required stake per item.
    * @param _removalPeriod The amount of seconds an item needs to go through removal period to be removed.
-   * @param _arbitratorExtraDataId Id of the internally stored arbitrator extra data
+   * @param _arbitrationSettingId Id of the internally stored arbitrator setting
    * @param _metaEvidence IPFS uri of metaEvidence
    */
   function createList(
     uint64 _governorId,
     uint32 _requiredStake,
     uint32 _removalPeriod,
-    uint64 _arbitratorExtraDataId,
+    uint64 _arbitrationSettingId,
     string calldata _metaEvidence
   ) external {
     require(_governorId < accountCount, "Account must exist");
+    require(_arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
     uint64 listId = listCount;
     unchecked {listCount++;}
     List storage list = lists[listId];
     list.governorId = _governorId;
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
-    list.arbitratorExtraDataId = _arbitratorExtraDataId;
-    emit ListCreated(_governorId, _requiredStake, _removalPeriod, _arbitratorExtraDataId);
+    list.arbitrationSettingId = _arbitrationSettingId;
+    emit ListCreated(_governorId, _requiredStake, _removalPeriod, _arbitrationSettingId);
     emit MetaEvidence(listId, _metaEvidence);
   }
 
@@ -222,7 +226,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _governorId Id of the new governor.
    * @param _requiredStake Cint32 version of the new required stake per item.
    * @param _removalPeriod Seconds until item is considered removed after starting removal.
-   * @param _arbitratorExtraDataId Id of the new arbitrator extra data
+   * @param _arbitrationSettingId Id of the new arbitrator extra data
    * @param _metaEvidence IPFS uri of metaEvidence
    */
   function updateList(
@@ -230,17 +234,18 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 _governorId,
     uint32 _requiredStake,
     uint32 _removalPeriod,
-    uint64 _arbitratorExtraDataId,
+    uint64 _arbitrationSettingId,
     string calldata _metaEvidence
   ) external {
     require(_governorId < accountCount, "Account must exist");
+    require(_arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
     List storage list = lists[_listId];
     require(accounts[list.governorId].wallet == msg.sender, "Only governor can update list");
     list.governorId = _governorId;
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
-    list.arbitratorExtraDataId = _arbitratorExtraDataId;
-    emit ListUpdated(_listId, _governorId, _requiredStake, _removalPeriod, _arbitratorExtraDataId);
+    list.arbitrationSettingId = _arbitrationSettingId;
+    emit ListUpdated(_listId, _governorId, _requiredStake, _removalPeriod, _arbitrationSettingId);
     emit MetaEvidence(_listId, _metaEvidence);
   }
 
@@ -418,13 +423,17 @@ contract StakeCurate is IArbitrable, IEvidence {
     ;
     uint64 disputeSlot = firstFreeDisputeSlot(_fromDisputeSlot);
 
-    bytes memory arbitratorExtraData = arbitratorExtraDataMap[list.arbitratorExtraDataId];
-    uint256 arbitratorDisputeId = arbitrator.createDispute{value: msg.value}(RULING_OPTIONS, arbitratorExtraData);
-    disputeIdToDisputeSlot[arbitratorDisputeId] = disputeSlot;
+    ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
+    uint256 arbitratorDisputeId =
+      arbSetting.arbitrator.createDispute{value: msg.value}(
+        RULING_OPTIONS, arbSetting.arbitratorExtraData
+      );
+    arbitratorAndDisputeIdToDisputeSlot
+      [address(arbSetting.arbitrator)][arbitratorDisputeId] = disputeSlot;
 
     item.slotState = ItemSlotState.Disputed;
-    // should item stop being removed? this opens a (costly?) dispute spam attack that disallows removing item.
-    // if you don't stop the removal, the opposite happens. submitter can make dofus disputes until making the removal period
+    // todo revisit the removing logic. instead of setting the removing timestamp to 0,
+    // just reset the timestamp to current block when challenge fails.
     item.removingTimestamp = 0;
     item.committedStake = Cint32.compress(comittedAmount);
     unchecked {
@@ -434,27 +443,34 @@ contract StakeCurate is IArbitrable, IEvidence {
       arbitratorDisputeId: arbitratorDisputeId,
       itemSlot: _itemSlot,
       challengerId: _challengerId,
+      arbitrationSetting: list.arbitrationSettingId,
       state: DisputeState.Used,
       freespace: 0
     });
 
     emit ItemChallenged(_itemSlot, disputeSlot);
     // ERC 1497
-    // evidenceGroupId is obtained from the (itemSlot, submissionTimestamp) pair
-    uint256 evidenceGroupId = uint256(keccak256(abi.encodePacked(_itemSlot, item.submissionTimestamp)));
-    emit Dispute(arbitrator, arbitratorDisputeId, item.listId, evidenceGroupId);
-    emit Evidence(arbitrator, evidenceGroupId, msg.sender, _reason);
+    uint256 evidenceGroupId = getEvidenceGroupId(_itemSlot);
+    emit Dispute(arbSetting.arbitrator, arbitratorDisputeId, item.listId, evidenceGroupId);
+    emit Evidence(arbSetting.arbitrator, evidenceGroupId, msg.sender, _reason);
   }
 
   /**
    * @dev Submits evidence to potentially any dispute or item.
-   * @param _evidenceGroupId Id to identify the dispute or item to submit evidence for.
+   * @param _itemSlot The slot containing the item to submit evidence to.
+   * @param _arbitrator The arbitrator to submit evidence to. This is needed because:
+   * 1. it's not possible to obtain the dispute from an item
+   * 2. the item may be currently ruled by a different arbitrator than the one
+   * its list it's pointing to
+   * 3. the item may not even be in a dispute (so, just use the arbitrator in the list)
+   * ---
+   * Anyhow, the subgraph will be ignoring this parameter. It's kept to allow arbitrators
+   * to render evidence properly.
    * @param _evidence IPFS uri linking to the evidence.
    */
-  function submitEvidence(uint256 _evidenceGroupId, string calldata _evidence) external {
-    // you can just submit evidence directly to any _evidenceGroupId
-    // alternatively, could be (itemSlot, submissionTimestamp) pair 
-    emit Evidence(arbitrator, _evidenceGroupId, msg.sender, _evidence);
+  function submitEvidence(uint64 _itemSlot, IArbitrator _arbitrator, string calldata _evidence) external {
+    uint256 evidenceGroupId = getEvidenceGroupId(_itemSlot);
+    emit Evidence(_arbitrator, evidenceGroupId, msg.sender, _evidence);
   }
 
   /**
@@ -466,10 +482,12 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _ruling Ruling of the dispute. If 0 or 1, submitter wins. Else (2) challenger wins
    */
   function rule(uint256 _disputeId, uint256 _ruling) external override {
-    require(msg.sender == address(arbitrator), "Only arbitrator can rule");
     // 1. get slot from dispute
-    uint64 disputeSlot = disputeIdToDisputeSlot[_disputeId];
+    uint64 disputeSlot = arbitratorAndDisputeIdToDisputeSlot[msg.sender][_disputeId];
     DisputeSlot storage dispute = disputes[disputeSlot];
+    ArbitrationSetting storage arbSetting = arbitrationSettings[dispute.arbitrationSetting];
+    require(msg.sender == address(arbSetting.arbitrator), "Only arbitrator can rule");
+
     Item storage item = items[dispute.itemSlot];
     Account storage account = accounts[item.accountId];
     // 2. make sure that dispute has an ongoing dispute
@@ -503,7 +521,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       payable(accounts[dispute.challengerId].wallet).send(amount);
     }
     dispute.state = DisputeState.Free;
-    emit Ruling(arbitrator, _disputeId, _ruling);
+    emit Ruling(arbSetting.arbitrator, _disputeId, _ruling);
   }
 
   // ----- VIEW FUNCTIONS -----
@@ -541,6 +559,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     // the item must have same or more committed amount than required for list
     bool enoughCommitted = Cint32.decompress(_item.committedStake) >= Cint32.decompress(_list.requiredStake);
     return (!free && _item.slotState == ItemSlotState.Used && enoughCommitted);
+  }
+
+  function getEvidenceGroupId(uint64 _itemSlot) public view returns (uint256) {
+    // evidenceGroupId is obtained from the (itemSlot, submissionTimestamp) pair
+    return (uint256(keccak256(
+      abi.encodePacked(_itemSlot, items[_itemSlot].submissionTimestamp)
+    )));
   }
 
   // ----- PURE FUNCTIONS -----
