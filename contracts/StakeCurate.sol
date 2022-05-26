@@ -54,7 +54,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 removingTimestamp; // frontrunning protection
     bool removing; // on failed dispute, will automatically reset removingTimestamp
     ItemSlotState slotState;
-    uint32 submissionTimestamp; // only used to make evidenceGroupId
+    uint32 submissionBlock; // only used to make evidenceGroupId.
     uint16 freespace; // you could hold bounties here?
     bytes harddata;
   }
@@ -280,7 +280,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.listId = _listId;
     item.removingTimestamp = 0;
     item.removing = false;
-    item.submissionTimestamp = uint32(block.timestamp);
+    // (not sure) in arbitrum, this is actually the L1 block number
+    // which means, collisions in the L2 might be possible, so
+    // this doesn't guarantee identity. when moving to arbitrum,
+    // remember to change this to get the arb block number instead.
+    // https://developer.offchainlabs.com/docs/time_in_arbitrum
+    item.submissionBlock = uint32(block.number);
     item.harddata = _harddata;
 
     emit ItemAdded(itemSlot, _listId, _accountId, _ipfsUri, _harddata);
@@ -562,9 +567,9 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   function getEvidenceGroupId(uint64 _itemSlot) public view returns (uint256) {
-    // evidenceGroupId is obtained from the (itemSlot, submissionTimestamp) pair
+    // evidenceGroupId is obtained from the (itemSlot, submissionBlock) pair
     return (uint256(keccak256(
-      abi.encodePacked(_itemSlot, items[_itemSlot].submissionTimestamp)
+      abi.encodePacked(_itemSlot, items[_itemSlot].submissionBlock)
     )));
   }
 
