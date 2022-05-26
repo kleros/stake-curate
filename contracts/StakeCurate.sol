@@ -184,17 +184,6 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   /**
-   * overflow estimate for optimistic rollup: 
-   * 4294967296 * 3 * 32 * 3 * (100 / 1000000000) = 123.6k ETH
-   * id_space * slots * bytes_per_slot * gas_per_calldata_byte * gas_price
-   * that's an (estimated) ETH cost to overflow the arbitratorExtraDataId
-   * at 100 calls per second, that's 1.38 years
-   * for a stake curate deployed in mainnet:
-   * 4294967296 * 26000 * (100 / 1000000000) = 11.16M ETH
-   * time unknown.
-  */
-
-  /**
    * @dev Create arbitrator extra data. Will be assigned to an id.
    * @param _arbitratorExtraData The extra data
    */
