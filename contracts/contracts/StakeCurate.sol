@@ -28,7 +28,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   /// @dev Item may be free even if "Used"! Use itemIsFree view. (because of removingTimestamp)
   enum ItemSlotState { Free, Used, Disputed }
 
-  uint256 internal constant ACCOUNT_WITHDRAW_PERIOD = 604_800; // 1 week
+  uint256 public immutable ACCOUNT_WITHDRAW_PERIOD;
   uint256 internal constant RULING_OPTIONS = 2;
 
   /// @dev Some uint256 are lossily compressed into uint32 using Cint32.sol
@@ -117,7 +117,9 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /** @dev Constructs the StakeCurate contract.
    */
-  constructor() {}
+  constructor(uint256 _withdrawalPeriod) {
+    ACCOUNT_WITHDRAW_PERIOD = _withdrawalPeriod;
+  }
 
   // ----- PUBLIC FUNCTIONS -----
 
