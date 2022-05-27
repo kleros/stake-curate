@@ -24,8 +24,8 @@ const config: HardhatUserConfig = {
     },
   },
   networks: {
-    ropsten: {
-      url: process.env.ROPSTEN_URL || "",
+    kovan: {
+      url: process.env.KOVAN_URL || "",
       accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
     },
   },

@@ -5,6 +5,7 @@ import { Bytes, Contract, Signer } from "ethers"
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers"
 
 use(waffleChai)
+const ACCOUNT_WITHDRAW_PERIOD = 604_800 // 1 week
 
 const deployContracts = async (deployer: Signer) => {
   const Arbitrator = await ethers.getContractFactory("Arbitrator", deployer)
@@ -12,7 +13,7 @@ const deployContracts = async (deployer: Signer) => {
   await arbitrator.deployed()
 
   const StakeCurate = await ethers.getContractFactory("StakeCurate", deployer)
-  const stakeCurate = await StakeCurate.deploy()
+  const stakeCurate = await StakeCurate.deploy(ACCOUNT_WITHDRAW_PERIOD)
   await stakeCurate.deployed()
   await stakeCurate.connect(deployer).createArbitrationSetting(arbitrator.address, "0x")
 
@@ -26,7 +27,6 @@ describe("Stake Curate", async () => {
   let [deployer, challenger, interloper, governor, hobo, adopter]: SignerWithAddress[] = []
   let [arbitrator, stakeCurate]: Contract[] = []
 
-  const ACCOUNT_WITHDRAW_PERIOD = 604_800 // 1 week
   const LIST_REQUIRED_STAKE = 100
   const LIST_REMOVAL_PERIOD = 60
   const CHALLENGE_FEE = 1_000_000_000 // also used for appeals
