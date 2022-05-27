@@ -7,7 +7,7 @@
  * SPDX-License-Identifier: Licenses are not real
  */
 
-pragma solidity ^0.8.11;
+pragma solidity ^0.8.14;
 
 import "./../Cint32.sol";
 
