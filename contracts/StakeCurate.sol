@@ -33,7 +33,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /// @dev Some uint256 are lossily compressed into uint32 using Cint32.sol
   struct Account {
-    address wallet;
+    address owner;
     uint32 fullStake;
     uint32 lockedStake;
     uint32 withdrawingTimestamp; // frontrunning protection. overflows in 2106.
@@ -78,7 +78,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // ----- EVENTS -----
 
-  event AccountCreated(uint64 _accountId, address _wallet, uint256 _fullStake);
+  event AccountCreated(uint64 _accountId, address _owner, uint256 _fullStake);
   event AccountFunded(uint64 _accountId, uint256 _fullStake);
   event AccountStartWithdraw(uint64 _accountId);
   event AccountWithdrawn(uint64 _accountId, uint256 _amount);
@@ -126,22 +126,22 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 accountId = accountCount;
     Account storage account = accounts[accountCount];
     unchecked {accountCount++;}
-    account.wallet = msg.sender;
+    account.owner = msg.sender;
     account.fullStake = Cint32.compress(msg.value);
     emit AccountCreated(accountId, msg.sender, msg.value);
   }
 
   /**
    * @dev Creates an account for a given address and starts it with funds dependent on value.
-   * @param _wallet The address of the account you will create.
+   * @param _owner The address of the account you will create.
    */
-  function createAccountForAddress(address _wallet) external payable {
+  function createAccountForAddress(address _owner) external payable {
     uint64 accountId = accountCount;
     Account storage account = accounts[accountCount];
     unchecked {accountCount++;}
-    account.wallet = _wallet;
+    account.owner = _owner;
     account.fullStake = Cint32.compress(msg.value);
-    emit AccountCreated(accountId, _wallet, msg.value);
+    emit AccountCreated(accountId, _owner, msg.value);
   }
 
   /**
@@ -164,7 +164,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    */
   function startWithdrawAccount(uint64 _accountId) external {
     Account storage account = accounts[_accountId];
-    require(account.wallet == msg.sender, "Only account owner can invoke account");
+    require(account.owner == msg.sender, "Only account owner can invoke account");
     account.withdrawingTimestamp = uint32(block.timestamp);
     emit AccountStartWithdraw(_accountId);
   }
@@ -177,7 +177,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   function withdrawAccount(uint64 _accountId, uint256 _amount) external {
     unchecked {
       Account storage account = accounts[_accountId];
-      require(account.wallet == msg.sender, "Only account owner can invoke account");
+      require(account.owner == msg.sender, "Only account owner can invoke account");
       uint32 timestamp = account.withdrawingTimestamp;
       require(timestamp != 0, "Withdrawal didn't start");
       require(timestamp + ACCOUNT_WITHDRAW_PERIOD <= block.timestamp, "Withdraw period didn't pass");
@@ -189,7 +189,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       uint256 newStake = fullStake - _amount;
       account.fullStake = Cint32.compress(newStake);
       account.withdrawingTimestamp = 0;
-      payable(account.wallet).send(_amount);
+      payable(account.owner).send(_amount);
       emit AccountWithdrawn(_accountId, _amount);
     }
   }
@@ -255,7 +255,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(_governorId < accountCount, "Account must exist");
     require(_arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
     List storage list = lists[_listId];
-    require(accounts[list.governorId].wallet == msg.sender, "Only governor can update list");
+    require(accounts[list.governorId].owner == msg.sender, "Only governor can update list");
     list.governorId = _governorId;
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
@@ -281,7 +281,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   ) external {
     uint64 itemSlot = firstFreeItemSlot(_fromItemSlot);
     Account memory account = accounts[_accountId];
-    require(account.wallet == msg.sender, "Only account owner can invoke account");
+    require(account.owner == msg.sender, "Only account owner can invoke account");
     Item storage item = items[itemSlot];
     List storage list = lists[_listId];
     uint32 compressedRequiredStake = list.requiredStake;
@@ -313,7 +313,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   ) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
-    require(account.wallet == msg.sender, "Only account owner can invoke account");
+    require(account.owner == msg.sender, "Only account owner can invoke account");
     require(!item.removing, "Item is being removed");
     require(item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
     uint256 freeStake = getFreeStake(account);
@@ -332,7 +332,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   function startRemoveItem(uint64 _itemSlot) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
-    require(account.wallet == msg.sender, "Only account owner can invoke account");
+    require(account.owner == msg.sender, "Only account owner can invoke account");
     require(!item.removing, "Item is already being removed");
     require(item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
 
@@ -349,7 +349,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
     List memory list = lists[item.listId];
-    require(account.wallet == msg.sender, "Only account owner can invoke account");
+    require(account.owner == msg.sender, "Only account owner can invoke account");
     require(!itemIsFree(item, list), "ItemSlot must not be free"); // You can cancel removal while Disputed
     require(item.removing, "Item is not being removed");
     item.removingTimestamp = 0;
@@ -369,7 +369,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Account memory adopter = accounts[_adopterId];
     List memory list = lists[item.listId];
 
-    require(adopter.wallet == msg.sender, "Only adopter owner can adopt");
+    require(adopter.owner == msg.sender, "Only adopter owner can adopt");
     require(item.slotState == ItemSlotState.Used, "Item slot must be Used");
     require(itemIsInAdoption(item, list, account), "Item is not in adoption");
     uint256 freeStake = getFreeStake(adopter);
@@ -393,7 +393,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
     List memory list = lists[item.listId];
-    require(account.wallet == msg.sender, "Only account owner can invoke account");
+    require(account.owner == msg.sender, "Only account owner can invoke account");
     require(!itemIsFree(item, list) && item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
     require(!item.removing, "Item is being removed");
     
@@ -430,7 +430,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     // this validation is not needed for security, since the challenger is only
     // referenced to forward the reward if challenge is won. but, it's nicer.
-    require(accounts[_challengerId].wallet == msg.sender, "Only account owner can challenge on behalf");
+    require(accounts[_challengerId].owner == msg.sender, "Only account owner can challenge on behalf");
     
     require(itemCanBeChallenged(item, list), "Item cannot be challenged");
     uint256 freeStake = getFreeStake(account);
@@ -538,7 +538,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       account.fullStake = Cint32.compress(Cint32.decompress(account.fullStake) - amount);
       account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) - amount);
       // is it dangerous to send before the end of the function? please answer on audit
-      payable(accounts[dispute.challengerId].wallet).send(amount);
+      payable(accounts[dispute.challengerId].owner).send(amount);
     }
     dispute.state = DisputeState.Free;
     emit Ruling(arbSetting.arbitrator, _disputeId, _ruling);
