@@ -58,11 +58,11 @@ describe("Stake Curate", async () => {
       // can you get value/sender out of an event that doesn't emit it?
       await expect(stakeCurate.connect(deployer).createAccount({ value }))
         .to.emit(stakeCurate, "AccountCreated")
-        .withArgs(deployerId, deployer.address, value)
+        .withArgs(deployer.address, value)
       // get an acc for interloper too (to see the realistic account creation cost)
       await expect(stakeCurate.connect(interloper).createAccount({ value }))
         .to.emit(stakeCurate, "AccountCreated")
-        .withArgs(deployerId + 1, interloper.address, value)
+        .withArgs(interloper.address, value)
     })
 
     it("Create account for a given address", async () => {
@@ -70,11 +70,11 @@ describe("Stake Curate", async () => {
       // can you get value/sender out of an event that doesn't emit it?
       await expect(stakeCurate.connect(deployer).createAccountForAddress(deployer.address, { value }))
         .to.emit(stakeCurate, "AccountCreated")
-        .withArgs(deployerId, deployer.address, value)
+        .withArgs(deployer.address, value)
       // get an acc for interloper too (to see the realistic account creation cost)
       await expect(stakeCurate.connect(deployer).createAccountForAddress(interloper.address, { value }))
         .to.emit(stakeCurate, "AccountCreated")
-        .withArgs(deployerId + 1, interloper.address, value)
+        .withArgs(interloper.address, value)
     })
   
     it("Fund account", async () => {

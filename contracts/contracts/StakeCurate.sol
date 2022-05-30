@@ -78,10 +78,10 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // ----- EVENTS -----
 
-  event AccountCreated(uint64 _accountId, address _owner, uint256 _fullStake);
-  event AccountFunded(uint64 _accountId, uint256 _fullStake);
+  event AccountCreated(address _owner, uint32 _fullStake);
+  event AccountFunded(uint64 _accountId, uint32 _fullStake);
   event AccountStartWithdraw(uint64 _accountId);
-  event AccountWithdrawn(uint64 _accountId, uint256 _amount);
+  event AccountWithdrawn(uint64 _accountId, uint32 _fullStake);
 
   event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
 
@@ -125,12 +125,12 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /// @dev Creates an account and starts it with funds dependent on value
   function createAccount() external payable {
-    uint64 accountId = accountCount;
     Account storage account = accounts[accountCount];
     unchecked {accountCount++;}
     account.owner = msg.sender;
-    account.fullStake = Cint32.compress(msg.value);
-    emit AccountCreated(accountId, msg.sender, msg.value);
+    uint32 fullStake = Cint32.compress(msg.value);
+    account.fullStake = fullStake;
+    emit AccountCreated(msg.sender, fullStake);
   }
 
   /**
@@ -138,12 +138,12 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _owner The address of the account you will create.
    */
   function createAccountForAddress(address _owner) external payable {
-    uint64 accountId = accountCount;
     Account storage account = accounts[accountCount];
     unchecked {accountCount++;}
     account.owner = _owner;
-    account.fullStake = Cint32.compress(msg.value);
-    emit AccountCreated(accountId, _owner, msg.value);
+    uint32 fullStake = Cint32.compress(msg.value);
+    account.fullStake = fullStake;
+    emit AccountCreated(_owner, fullStake);
   }
 
   /**
@@ -154,8 +154,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     unchecked {
       Account storage account = accounts[_accountId];
       uint256 fullStake = Cint32.decompress(account.fullStake) + msg.value;
-      account.fullStake = Cint32.compress(fullStake);
-      emit AccountFunded(_accountId, fullStake);
+      uint32 compressedFullStake = Cint32.compress(fullStake);
+      account.fullStake = compressedFullStake;
+      emit AccountFunded(_accountId, compressedFullStake);
     }
   }
 
@@ -188,11 +189,11 @@ contract StakeCurate is IArbitrable, IEvidence {
       uint256 freeStake = fullStake - lockedStake; // we needed to decompress fullstake anyway
       require(freeStake >= _amount, "You can't afford to withdraw that much");
       // Initiate withdrawal
-      uint256 newStake = fullStake - _amount;
-      account.fullStake = Cint32.compress(newStake);
+      uint32 newStake = Cint32.compress(fullStake - _amount);
+      account.fullStake = newStake;
       account.withdrawingTimestamp = 0;
       payable(account.owner).send(_amount);
-      emit AccountWithdrawn(_accountId, _amount);
+      emit AccountWithdrawn(_accountId, newStake);
     }
   }
 
