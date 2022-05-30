@@ -1,0 +1,74 @@
+specVersion: 0.0.4
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: StakeCurate
+    network: kovan
+    source:
+      address: "0x4216c760f778b37EF52A512511C45C56411Bc130"
+      abi: StakeCurate
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.5
+      language: wasm/assemblyscript
+      entities:
+        - AccountCreated
+        - AccountFunded
+        - AccountStartWithdraw
+        - AccountWithdrawn
+        - ArbitrationSettingCreated
+        - Dispute
+        - Evidence
+        - ItemAdded
+        - ItemAdopted
+        - ItemChallenged
+        - ItemEdited
+        - ItemRecommitted
+        - ItemStartRemoval
+        - ItemStopRemoval
+        - ListCreated
+        - ListUpdated
+        - MetaEvidence
+        - Ruling
+      abis:
+        - name: StakeCurate
+          file: ./abis/StakeCurate.json
+      eventHandlers:
+        - event: AccountCreated(uint64,address,uint256)
+          handler: handleAccountCreated
+        - event: AccountFunded(uint64,uint256)
+          handler: handleAccountFunded
+        - event: AccountStartWithdraw(uint64)
+          handler: handleAccountStartWithdraw
+        - event: AccountWithdrawn(uint64,uint256)
+          handler: handleAccountWithdrawn
+        - event: ArbitrationSettingCreated(address,bytes)
+          handler: handleArbitrationSettingCreated
+        - event: Dispute(indexed address,indexed uint256,uint256,uint256)
+          handler: handleDispute
+        - event: Evidence(indexed address,indexed uint256,indexed address,string)
+          handler: handleEvidence
+        - event: ItemAdded(uint64,uint64,uint64,string,bytes)
+          handler: handleItemAdded
+        - event: ItemAdopted(uint64,uint64)
+          handler: handleItemAdopted
+        - event: ItemChallenged(uint64,uint64)
+          handler: handleItemChallenged
+        - event: ItemEdited(uint64,string,bytes)
+          handler: handleItemEdited
+        - event: ItemRecommitted(uint64)
+          handler: handleItemRecommitted
+        - event: ItemStartRemoval(uint64)
+          handler: handleItemStartRemoval
+        - event: ItemStopRemoval(uint64)
+          handler: handleItemStopRemoval
+        - event: ListCreated(uint64,uint32,uint32,uint64)
+          handler: handleListCreated
+        - event: ListUpdated(uint64,uint64,uint32,uint32,uint64)
+          handler: handleListUpdated
+        - event: MetaEvidence(indexed uint256,string)
+          handler: handleMetaEvidence
+        - event: Ruling(indexed address,indexed uint256,uint256)
+          handler: handleRuling
+      file: ./src/stake-curate.ts

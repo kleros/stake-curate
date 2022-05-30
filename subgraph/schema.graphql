@@ -1,0 +1,228 @@
+enum ItemStatus {
+  "The item could be included, but may have been removed or not held by enough stake."
+  Included
+  "The item is currently ongoing a dispute."
+  Disputed
+  "The item has been excluded after a successful challenge."
+  Excluded
+}
+
+enum DisputeStatus {
+  "The dispute is still ongoing."
+  Ongoing
+  "The dispute has been resolved."
+  Resolved
+}
+
+type GeneralCounter @entity {
+  "id is always the string 'general-counter'"
+  id: ID!
+  "Counts how many lists exist"
+  listCount: BigInt!
+  "Counts how many accounts exist"
+  accountCount: BigInt!
+  "Counts how many arbitration settings exist"
+  arbitrationSettingCount: BigInt!
+}
+
+type Account @entity {
+  "A<accountId>"
+  id: ID!
+  "Identifies the account in the contract"
+  accountId: BigInt!
+  "The address owning the account"
+  owner: Bytes!
+  "Total stake owned by this account (uncompressed)"
+  fullStake: BigInt!
+  "Stake available, supports all items equal or under (uncompressed)"
+  freeStake: BigInt!
+  "Stake locked due to ongoing disputes (uncompressed)"
+  lockedStake: BigInt!
+  "Currently in withdrawal process"
+  withdrawing: boolean!
+  "Timestamp in which withdrawing process has started"
+  withdrawingTimestamp: BigInt!
+  "Items owned by this account"
+  items: [Item!]! @derivedFrom(field: "account")
+  "Editions authored by this account"
+  editions: [Edition!]! @derivedFrom(field: "author")
+}
+
+# keeping historical information on the list would be difficult, so not right now.
+# actually i guess i need to preserve this information from the getgo.
+# otherwise, when things such as metaEvidence change, the harddata interpretation
+# would get lost? but maybe we just dont want to interpret harddata at all
+# on the frontend.
+# still, I need to keep track of the metaEvidences so that I can tell
+# what props are accepted, to show the users stuff when needed.
+type List @entity {
+  "L<listId>"
+  id: ID!
+  "Identifies the list in the contract"
+  listId: BigInt!
+  "Items contained in this list"
+  items: [Item!]! @derivedFrom(field: "list")
+  "How many items have ever been submitted to this list"
+  itemCount: BigInt!
+  "How many versions this list has had"
+  versionCount: BigInt!
+  "The different versions from this list"
+  versions: [ListVersion!]! @derivedFrom(field: "list")
+}
+
+type ListVersion @entity {
+  "LV<listVersionId>@<listId>"
+  id: ID!
+  "The list this version belongs to"
+  list: List!
+  "Account pointing to the governor"
+  governor: Account!
+  "Required stake for item inclusion in this list (uncompressed)"
+  requiredStake: BigInt!
+  "Removal period for items in this list, in seconds"
+  removalPeriod: BigInt!
+  "Arbitration setting for this list"
+  arbitrationSetting: ArbitrationSetting!
+  "MetaEvidence for this version"
+  metaEvidence: MetaEvidence!
+}
+
+type ArbitrationSetting @entity {
+  "AS<arbitrationSettingId>"
+  id: ID!
+  "Identifies the arbitrationSetting in the contract"
+  arbitrationSettingId: BigInt!
+  "Address of the arbitrator"
+  arbitrator: Bytes!
+  "Bytes that form the arbitratorExtraData"
+  arbitratorExtraData: Bytes!
+}
+
+type Item @entity {
+  "I<blockNumber>@<itemSlot>"
+  id: ID!
+  "Item slot in which the item resides"
+  itemSlot: BigInt!
+  "Blocknumber in which the item was submitted"
+  submissionBlock: BigInt!
+  "Status of the item"
+  status: ItemStatus!
+  "Stake amount committed to preserving the item (uncompressed)"
+  committedStake: BigInt!
+  "Whether if the item is currently being removed. It might have been removed already"
+  removing: boolean!
+  "Timestamp at which the removal is initiated"
+  removalTimestamp: BigInt!
+  "The account that owns the item"
+  account: Account!
+  "The List in which the item was submitted"
+  list: List!
+  "The incremental id this item holds within its list"
+  localId: BigInt!
+  "All the editions from this item"
+  editions: [Edition!]! @derivedFrom(field: "item")
+  "Current edition of this item. Might be unneeded"
+  currentEdition: Edition!
+  "All the disputes concerning this item"
+  disputes: [Dispute!]! @derivedFrom(field: "item")
+}
+
+type Edition @entity {
+  "E<editionId>@<blockNumber>@<itemSlot>"
+  id: ID!
+  "Item the edition belongs to"
+  item: Item!
+  "Account authoring this edition"
+  author: Account!
+  "Ipfs uri containing the off-chain data for the edition"
+  ipfsUri: String!
+  "Props contained in this edition"
+  props: [Prop!]! @derivedFrom(field: "edition")
+  "On-chain arbitrary data"
+  harddata: Bytes!
+  "Whether if this edition is malformatted"
+  isMalformatted: boolean!
+}
+
+type Dispute @entity {
+  "D<blockNumber>@<blockNumber>@<itemSlot>"
+  id: ID!
+  "Slot in which the dispute lives"
+  disputeSlot: BigInt!
+  "Status of the dispute"
+  status: DisputeStatus!
+  "Item whose inclusion is being disputed"
+  item: Item!
+  "Account of the challenger, who will be rewarded if winning"
+  challenger: Account!
+  "Arbitration setting for the dispute"
+  arbitrationSetting: ArbitrationSetting!
+  "Amount that rewarded to challenger upon successful challenge (uncompressed)"
+  stake: BigInt!
+  "Moment in which this dispute was created"
+  creationTimestamp: BigInt!
+  "Moment in which this dispute was resolved"
+  resolutionTimestamp: BigInt
+}
+
+type MetaEvidence @entity {
+  "ME<versionId>@<listId>"
+  id: ID!
+  "The version this MetaEvidence belongs to"
+  version: ListVersion!
+  "The raw metaEvidence IPFS URI"
+  ipfsUri: String!
+
+  ### From this point on, these fields may be missing or malformatted.
+  ### Also, regular metadata won't be verified (title, rulingOptions, category...)
+  ### A malicious governor could put wrong human readable meanings for rulings!
+  ### This is a known problem. Governors are trusted to not do it, at risk at
+  ### rendering the list worthless.
+
+  "Uri pointing to the policy document"
+  policyUri: String
+  "Columns of the metaEvidence"
+  columns: [Column!]! @derivedFrom(field: "metaEvidence")
+  "Recommended age for considering an item inclusion canonical for queries"
+  defaultAgeForInclusion: BigInt
+  "Displayed name for this list"
+  listTitle: String
+  "Displayed description for this list"
+  listDescription: String
+  "Name that will be used to display one item"
+  itemName: String
+  "Name that will be used to display many items"
+  itemNamePlural: String
+  "Displayed picture for this list"
+  logoUri: String
+  "Whether if this list contains other lists"
+  isListOfLists: boolean
+  "Whether if this list supports harddata"
+  hasHarddata: boolean
+  "Short description of what the harddata contains"
+  harddataDescription: String
+}
+
+type Column {
+  "MetaEvidence that holds this column"
+  metaEvidence: MetaEvidence!
+  "Type of this column"
+  type: String!
+  "Label of this column"
+  label: String!
+  "Description of this column"
+  description: String!
+  "Unknown usage"
+  isIdentifier: Boolean!
+}
+
+type Prop {
+  "Edition that holds this props"
+  edition: Edition!
+  "Value of this prop"
+  value: String!
+  "Type of this prop"
+  type: String!
+  "Label of this prop"
+  label: String!
+}
