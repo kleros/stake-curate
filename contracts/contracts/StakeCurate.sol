@@ -287,6 +287,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(account.owner == msg.sender, "Only account owner can invoke account");
     Item storage item = items[itemSlot];
     List storage list = lists[_listId];
+    require(item.submissionBlock != block.number, "Wait until next block");
     uint32 compressedRequiredStake = list.requiredStake;
     uint256 freeStake = getFreeStake(account);
     uint256 requiredStake = Cint32.decompress(compressedRequiredStake);
