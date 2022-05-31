@@ -21,7 +21,7 @@ import {
   MetaEvidence,
   Ruling
 } from "../generated/StakeCurate/StakeCurate"
-import { Account, GeneralCounter } from "../generated/schema"
+import { Account, ArbitrationSetting, GeneralCounter } from "../generated/schema"
 import { decompress } from "./cint32"
 
 export function handleStakeCurateCreated(event: StakeCurateCreated): void {
@@ -54,16 +54,47 @@ export function handleAccountCreated(event: AccountCreated): void {
 }
 
 export function handleAccountFunded(event: AccountFunded): void {
-  let account = Account.load(event.params._accountId.toString())
+  let account = Account.load(event.params._accountId.toString()) as Account
+
+  let fullStake = decompress(event.params._fullStake)
+  account.fullStake = fullStake
+  account.freeStake = fullStake.minus(account.lockedStake)
+  account.save()
 }
 
-export function handleAccountStartWithdraw(event: AccountStartWithdraw): void {}
+export function handleAccountStartWithdraw(event: AccountStartWithdraw): void {
+  let account = Account.load(event.params._accountId.toString()) as Account
 
-export function handleAccountWithdrawn(event: AccountWithdrawn): void {}
+  account.withdrawing = true
+  account.withdrawingTimestamp = event.block.timestamp
+  account.save()
+}
+
+export function handleAccountWithdrawn(event: AccountWithdrawn): void {
+  let account = Account.load(event.params._accountId.toString()) as Account
+
+  let fullStake = decompress(event.params._fullStake)
+  account.fullStake = fullStake
+  account.freeStake = fullStake.minus(account.lockedStake)
+  account.withdrawing = false
+  account.withdrawingTimestamp = BigInt.fromI32(0)
+}
 
 export function handleArbitrationSettingCreated(
   event: ArbitrationSettingCreated
-): void {}
+): void {
+  let counter = GeneralCounter.load("0") as GeneralCounter
+
+  let arbSetting = new ArbitrationSetting(counter.arbitrationSettingCount.toString())
+  arbSetting.arbitrationSettingId = counter.arbitrationSettingCount
+  arbSetting.arbitrator = event.params._arbitrator
+  arbSetting.arbitratorExtraData = event.params._arbitratorExtraData
+  arbSetting.save()
+
+  // increment arbitrationSettingCount
+  counter.arbitrationSettingCount = counter.arbitrationSettingCount.plus(BigInt.fromI32(1))
+  counter.save()
+}
 
 export function handleDispute(event: Dispute): void {}
 
