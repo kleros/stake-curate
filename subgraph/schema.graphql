@@ -15,7 +15,7 @@ enum DisputeStatus {
 }
 
 type GeneralCounter @entity {
-  "id is always the string 'general-counter'"
+  "The id is always the string '0'"
   id: ID!
   "Counts how many lists exist"
   listCount: BigInt!
@@ -26,7 +26,7 @@ type GeneralCounter @entity {
 }
 
 type Account @entity {
-  "A<accountId>"
+  "<accountId>"
   id: ID!
   "Identifies the account in the contract"
   accountId: BigInt!
@@ -48,15 +48,8 @@ type Account @entity {
   editions: [Edition!]! @derivedFrom(field: "author")
 }
 
-# keeping historical information on the list would be difficult, so not right now.
-# actually i guess i need to preserve this information from the getgo.
-# otherwise, when things such as metaEvidence change, the harddata interpretation
-# would get lost? but maybe we just dont want to interpret harddata at all
-# on the frontend.
-# still, I need to keep track of the metaEvidences so that I can tell
-# what props are accepted, to show the users stuff when needed.
 type List @entity {
-  "L<listId>"
+  "<listId>"
   id: ID!
   "Identifies the list in the contract"
   listId: BigInt!
@@ -70,11 +63,13 @@ type List @entity {
   versions: [ListVersion!]! @derivedFrom(field: "list")
 }
 
-type ListVersion @entity {
+type ListVersion @entity(immutable: true) {
   "LV<listVersionId>@<listId>"
   id: ID!
   "The list this version belongs to"
   list: List!
+  "The incremental id given to this version"
+  versionId: BigInt!
   "Account pointing to the governor"
   governor: Account!
   "Required stake for item inclusion in this list (uncompressed)"
@@ -87,8 +82,8 @@ type ListVersion @entity {
   metaEvidence: MetaEvidence!
 }
 
-type ArbitrationSetting @entity {
-  "AS<arbitrationSettingId>"
+type ArbitrationSetting @entity(immutable: true) {
+  "<arbitrationSettingId>"
   id: ID!
   "Identifies the arbitrationSetting in the contract"
   arbitrationSettingId: BigInt!
@@ -99,7 +94,7 @@ type ArbitrationSetting @entity {
 }
 
 type Item @entity {
-  "I<blockNumber>@<itemSlot>"
+  "<blockNumber>@<itemSlot>"
   id: ID!
   "Item slot in which the item resides"
   itemSlot: BigInt!
@@ -127,8 +122,8 @@ type Item @entity {
   disputes: [Dispute!]! @derivedFrom(field: "item")
 }
 
-type Edition @entity {
-  "E<editionId>@<blockNumber>@<itemSlot>"
+type Edition @entity(immutable: true) {
+  "<editionId>@<blockNumber>@<itemSlot>"
   id: ID!
   "Item the edition belongs to"
   item: Item!
@@ -145,10 +140,12 @@ type Edition @entity {
 }
 
 type Dispute @entity {
-  "D<blockNumber>@<blockNumber>@<itemSlot>"
+  "<localId>@<blockNumber>@<itemSlot>"
   id: ID!
   "Slot in which the dispute lives"
   disputeSlot: BigInt!
+  "How many disputes had been made for this item at dispute creation"
+  localId: BigInt!
   "Status of the dispute"
   status: DisputeStatus!
   "Item whose inclusion is being disputed"
@@ -165,7 +162,7 @@ type Dispute @entity {
   resolutionTimestamp: BigInt
 }
 
-type MetaEvidence @entity {
+type MetaEvidence @entity(immutable: true) {
   "ME<versionId>@<listId>"
   id: ID!
   "The version this MetaEvidence belongs to"
@@ -203,8 +200,8 @@ type MetaEvidence @entity {
   harddataDescription: String
 }
 
-type Column @entity {
-  "COL<label>@<versionId>@<listId>"
+type Column @entity(immutable: true) {
+  "<label>@<versionId>@<listId>"
   id: ID!
   "MetaEvidence that holds this column"
   metaEvidence: MetaEvidence!
@@ -218,8 +215,8 @@ type Column @entity {
   isIdentifier: Boolean!
 }
 
-type Prop @entity {
-  "PROP<label>@<editionId>@<blockNumber>@<itemSlot>"
+type Prop @entity(immutable: true) {
+  "<label>@<editionId>@<blockNumber>@<itemSlot>"
   id: ID!
   "Edition that holds this props"
   edition: Edition!
