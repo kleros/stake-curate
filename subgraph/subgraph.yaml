@@ -6,42 +6,37 @@ dataSources:
     name: StakeCurate
     network: kovan
     source:
-      address: "0x4216c760f778b37EF52A512511C45C56411Bc130"
+      address: "0xd71214Eb9835e0fa24314299a6500aac6aec3D91"
       abi: StakeCurate
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.5
       language: wasm/assemblyscript
       entities:
-        - AccountCreated
-        - AccountFunded
-        - AccountStartWithdraw
-        - AccountWithdrawn
-        - ArbitrationSettingCreated
+        - GeneralCounter
+        - Account
+        - List
+        - ListVersion
+        - ArbitrationSetting
+        - Item
+        - Edition
         - Dispute
-        - Evidence
-        - ItemAdded
-        - ItemAdopted
-        - ItemChallenged
-        - ItemEdited
-        - ItemRecommitted
-        - ItemStartRemoval
-        - ItemStopRemoval
-        - ListCreated
-        - ListUpdated
         - MetaEvidence
-        - Ruling
+        - Column
+        - Prop
       abis:
         - name: StakeCurate
           file: ./abis/StakeCurate.json
       eventHandlers:
-        - event: AccountCreated(uint64,address,uint256)
+        - event: StakeCurateCreated()
+          handler: handleStakeCurateCreated()
+        - event: AccountCreated(address,uint32)
           handler: handleAccountCreated
-        - event: AccountFunded(uint64,uint256)
+        - event: AccountFunded(uint64,uint32)
           handler: handleAccountFunded
         - event: AccountStartWithdraw(uint64)
           handler: handleAccountStartWithdraw
-        - event: AccountWithdrawn(uint64,uint256)
+        - event: AccountWithdrawn(uint64,uint32)
           handler: handleAccountWithdrawn
         - event: ArbitrationSettingCreated(address,bytes)
           handler: handleArbitrationSettingCreated

@@ -39,7 +39,7 @@ type Account @entity {
   "Stake locked due to ongoing disputes (uncompressed)"
   lockedStake: BigInt!
   "Currently in withdrawal process"
-  withdrawing: boolean!
+  withdrawing: Boolean!
   "Timestamp in which withdrawing process has started"
   withdrawingTimestamp: BigInt!
   "Items owned by this account"
@@ -110,7 +110,7 @@ type Item @entity {
   "Stake amount committed to preserving the item (uncompressed)"
   committedStake: BigInt!
   "Whether if the item is currently being removed. It might have been removed already"
-  removing: boolean!
+  removing: Boolean!
   "Timestamp at which the removal is initiated"
   removalTimestamp: BigInt!
   "The account that owns the item"
@@ -141,7 +141,7 @@ type Edition @entity {
   "On-chain arbitrary data"
   harddata: Bytes!
   "Whether if this edition is malformatted"
-  isMalformatted: boolean!
+  isMalformatted: Boolean!
 }
 
 type Dispute @entity {
@@ -196,14 +196,16 @@ type MetaEvidence @entity {
   "Displayed picture for this list"
   logoUri: String
   "Whether if this list contains other lists"
-  isListOfLists: boolean
+  isListOfLists: Boolean
   "Whether if this list supports harddata"
-  hasHarddata: boolean
+  hasHarddata: Boolean
   "Short description of what the harddata contains"
   harddataDescription: String
 }
 
-type Column {
+type Column @entity {
+  "COL<label>@<versionId>@<listId>"
+  id: ID!
   "MetaEvidence that holds this column"
   metaEvidence: MetaEvidence!
   "Type of this column"
@@ -216,7 +218,9 @@ type Column {
   isIdentifier: Boolean!
 }
 
-type Prop {
+type Prop @entity {
+  "PROP<label>@<editionId>@<blockNumber>@<itemSlot>"
+  id: ID!
   "Edition that holds this props"
   edition: Edition!
   "Value of this prop"

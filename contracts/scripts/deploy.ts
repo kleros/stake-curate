@@ -5,6 +5,10 @@
 // Runtime Environment's members available in the global scope.
 import { ethers, run } from "hardhat"
 
+const sleep = (seconds: number): Promise<void> => {
+  return new Promise((resolve) => setTimeout(resolve, seconds * 1000))
+}
+
 async function main() {
   // Hardhat always runs the compile task when running scripts with its command
   // line interface.
@@ -21,6 +25,9 @@ async function main() {
   await stakeCurate.deployed()
 
   console.log("Deployed to:", stakeCurate.address)
+
+  // giving time for etherscan to keep up
+  await sleep(100)
 
   // verify in etherscan
   const etherscanResponse = await run("verify:verify", {

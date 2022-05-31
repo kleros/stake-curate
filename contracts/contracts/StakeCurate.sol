@@ -78,6 +78,9 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // ----- EVENTS -----
 
+  // Used to initialize counters in the subgraph
+  event StakeCurateCreated();
+
   event AccountCreated(address _owner, uint32 _fullStake);
   event AccountFunded(uint64 _accountId, uint32 _fullStake);
   event AccountStartWithdraw(uint64 _accountId);
@@ -119,6 +122,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    */
   constructor(uint256 _withdrawalPeriod) {
     ACCOUNT_WITHDRAW_PERIOD = _withdrawalPeriod;
+    emit StakeCurateCreated();
   }
 
   // ----- PUBLIC FUNCTIONS -----
