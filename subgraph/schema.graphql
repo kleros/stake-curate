@@ -198,6 +198,10 @@ type MetaEvidence @entity(immutable: true) {
   hasHarddata: Boolean
   "Short description of what the harddata contains"
   harddataDescription: String
+
+  # maybe there should be a field to decode the harddata.
+  # but probably not, as more applications use harddata, they will
+  # likely use arbitrary encodings that don't map to sol types
 }
 
 type Column @entity(immutable: true) {
@@ -211,6 +215,8 @@ type Column @entity(immutable: true) {
   label: String!
   "Description of this column"
   description: String!
+  "Whether if giving a prop for this column is mandatory"
+  required: Boolean!
   "Unknown usage"
   isIdentifier: Boolean!
 }
