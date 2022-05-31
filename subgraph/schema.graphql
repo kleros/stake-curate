@@ -114,17 +114,27 @@ type Item @entity {
   list: List!
   "The incremental id this item holds within its list"
   localId: BigInt!
+  "How many editions does this item have"
+  editionCount: BigInt!
   "All the editions from this item"
   editions: [Edition!]! @derivedFrom(field: "item")
   "Current edition of this item. Might be unneeded"
   currentEdition: Edition!
+  "How many disputes there have been for this item"
+  disputeCount: BigInt!
   "All the disputes concerning this item"
   disputes: [Dispute!]! @derivedFrom(field: "item")
+  "Current dispute on this item. Might be uneeded, can be null"
+  currentDispute: Dispute
+  "Thread containing the evidence related to this item"
+  thread: EvidenceThread!
 }
 
 type Edition @entity(immutable: true) {
-  "<editionId>@<blockNumber>@<itemSlot>"
+  "<localId>@<blockNumber>@<itemSlot>"
   id: ID!
+  "The incremental id this edition holds within its item"
+  localId: BigInt!
   "Item the edition belongs to"
   item: Item!
   "Account authoring this edition"
@@ -137,6 +147,12 @@ type Edition @entity(immutable: true) {
   harddata: Bytes!
   "Whether if this edition is malformatted"
   isMalformatted: Boolean!
+  "When this edition was created"
+  timestamp: BigInt!
+  "Block at which this edition was created (used to call out frontrunning)"
+  blockNumber: BigInt!
+  "List version when this edition was created (historical)"
+  listVersion: ListVersion!
 }
 
 type Dispute @entity {
@@ -160,6 +176,8 @@ type Dispute @entity {
   creationTimestamp: BigInt!
   "Moment in which this dispute was resolved"
   resolutionTimestamp: BigInt
+  "List version at dispute creation"
+  listVersion: ListVersion!
 }
 
 type MetaEvidence @entity(immutable: true) {
@@ -232,4 +250,44 @@ type Prop @entity(immutable: true) {
   type: String!
   "Label of this prop"
   label: String!
+}
+
+type EvidenceThread @entity {
+  "<evidenceGroupId>"
+  id: ID!
+  "Evidence group id generated from itemSlot and blockNumber"
+  evidenceGroupId: BigInt!
+  "Item this evidence thread points to"
+  item: Item!
+  "Counts how many evidence has been posted on this thread"
+  evidenceCount: BigInt!
+  "List of evidences posted on this thread"
+  evidences: [Evidence!]! @derivedFrom(field: "thread")
+}
+
+type Evidence @entity(immutable: true) {
+  "<localId>@<evidenceGroupId>"
+  id: ID!
+  "Incremental id for its thread"
+  localId: BigInt!
+  "Thread this evidence points to"
+  thread: EvidenceThread!
+  "Raw ipfs uri of the json of this evidence"
+  rawUri: String!
+
+  # You cannot point to the historical edition or listVersion
+  # because you don't know if this evidence is being submitted
+  # for an ongoing dispute that was on a previous version.
+
+  # From this point on, these are parsed from its json
+  # Frontends should have workarounds when they are null
+
+  "Title of the evidence"
+  name: String
+  "Description of the evidence"
+  description: String
+  "URI of an optional file"
+  fileUri: String
+  "Extension of this file"
+  fileTypeExtension: String
 }
