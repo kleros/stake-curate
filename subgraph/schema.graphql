@@ -61,10 +61,12 @@ type List @entity {
   versionCount: BigInt!
   "The different versions from this list"
   versions: [ListVersion!]! @derivedFrom(field: "list")
+  "Current version of this list"
+  currentVersion: ListVersion!
 }
 
 type ListVersion @entity(immutable: true) {
-  "LV<listVersionId>@<listId>"
+  "<listVersionId>@<listId>"
   id: ID!
   "The list this version belongs to"
   list: List!
@@ -181,10 +183,12 @@ type Dispute @entity {
 }
 
 type MetaEvidence @entity(immutable: true) {
-  "ME<versionId>@<listId>"
+  "<versionId>@<listId>"
   id: ID!
   "The version this MetaEvidence belongs to"
   version: ListVersion!
+  "The incremental id given to this metaEvidence"
+  versionId: BigInt!
   "The raw metaEvidence IPFS URI"
   ipfsUri: String!
 
