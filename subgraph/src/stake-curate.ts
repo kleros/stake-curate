@@ -8,7 +8,7 @@ import {
   AccountWithdrawn,
   ArbitrationSettingCreated,
   Dispute,
-  Evidence,
+  Evidence as EvidenceEvent,
   ItemAdded,
   ItemAdopted,
   ItemChallenged,
@@ -18,10 +18,19 @@ import {
   ItemStopRemoval,
   ListCreated,
   ListUpdated,
-  MetaEvidence,
-  Ruling
+  MetaEvidence as MetaEvidenceEvent,
+  Ruling,
 } from "../generated/StakeCurate/StakeCurate"
-import { Account, ArbitrationSetting, GeneralCounter } from "../generated/schema"
+import {
+  Account,
+  ArbitrationSetting,
+  MetaEvidence,
+  Evidence,
+  GeneralCounter,
+  Item,
+  List,
+  ListVersion,
+} from "../generated/schema"
 import { decompress } from "./cint32"
 
 export function handleStakeCurateCreated(event: StakeCurateCreated): void {
@@ -85,14 +94,18 @@ export function handleArbitrationSettingCreated(
 ): void {
   let counter = GeneralCounter.load("0") as GeneralCounter
 
-  let arbSetting = new ArbitrationSetting(counter.arbitrationSettingCount.toString())
+  let arbSetting = new ArbitrationSetting(
+    counter.arbitrationSettingCount.toString()
+  )
   arbSetting.arbitrationSettingId = counter.arbitrationSettingCount
   arbSetting.arbitrator = event.params._arbitrator
   arbSetting.arbitratorExtraData = event.params._arbitratorExtraData
   arbSetting.save()
 
   // increment arbitrationSettingCount
-  counter.arbitrationSettingCount = counter.arbitrationSettingCount.plus(BigInt.fromI32(1))
+  counter.arbitrationSettingCount = counter.arbitrationSettingCount.plus(
+    BigInt.fromI32(1)
+  )
   counter.save()
 }
 
@@ -100,7 +113,11 @@ export function handleDispute(event: Dispute): void {}
 
 export function handleEvidence(event: Evidence): void {}
 
-export function handleItemAdded(event: ItemAdded): void {}
+export function handleItemAdded(event: ItemAdded): void {
+  let id = `${event.block.number}@${event.params._itemSlot}`
+  let item = new Item(id)
+  // todo
+}
 
 export function handleItemAdopted(event: ItemAdopted): void {}
 
@@ -114,10 +131,65 @@ export function handleItemStartRemoval(event: ItemStartRemoval): void {}
 
 export function handleItemStopRemoval(event: ItemStopRemoval): void {}
 
-export function handleListCreated(event: ListCreated): void {}
+export function handleListCreated(event: ListCreated): void {
+  let counter = GeneralCounter.load("0") as GeneralCounter
 
-export function handleListUpdated(event: ListUpdated): void {}
+  let list = new List(counter.listCount.toString())
+  list.listId = counter.listCount
+  list.itemCount = BigInt.fromI32(0)
+  list.versionCount = BigInt.fromI32(1)
 
-export function handleMetaEvidence(event: MetaEvidence): void {}
+  let listVersion = new ListVersion(`0@${list.id}`)
+  listVersion.list = list.id
+  listVersion.versionId = BigInt.fromI32(0)
+  listVersion.governor = event.params._governorId.toString()
+  listVersion.arbitrationSetting = event.params._arbitrationSettingId.toString()
+  listVersion.removalPeriod = event.params._removalPeriod
+  listVersion.requiredStake = decompress(event.params._requiredStake)
+  // we can figure out the MetaEvidence id, but it doesn't exist yet
+  listVersion.metaEvidence = `0@${list.id}`
+  listVersion.save()
+
+  list.currentVersion = listVersion.id
+  list.save()
+
+  counter.listCount = counter.listCount.plus(BigInt.fromI32(1))
+  counter.save()
+}
+
+export function handleListUpdated(event: ListUpdated): void {
+  let list = List.load(event.params._listId.toString()) as List
+
+  let listVersion = new ListVersion(
+    `${list.versionCount.toString()}@${list.id}`
+  )
+  listVersion.list = list.id
+  listVersion.versionId = list.versionCount
+  listVersion.governor = event.params._governorId.toString()
+  listVersion.arbitrationSetting = event.params._arbitrationSettingId.toString()
+  listVersion.removalPeriod = event.params._removalPeriod
+  listVersion.requiredStake = decompress(event.params._requiredStake)
+  // we can figure out the MetaEvidence id, but it doesn't exist yet
+  listVersion.metaEvidence = `${list.versionCount.toString()}@${list.id}`
+  listVersion.save()
+
+  list.versionCount = list.versionCount.plus(BigInt.fromI32(1))
+  list.currentVersion = listVersion.id
+  list.save()
+}
+
+export function handleMetaEvidence(event: MetaEvidenceEvent): void {
+  // metaEvidenceId points to the list
+  let list = List.load(event.params._metaEvidenceID.toString()) as List
+
+  // if the events are handled in the correct order, list or list update
+  // were handled before MetaEvidence. so, versionId already incremented.
+  let versionId = list.versionCount.minus(BigInt.fromI32(1))
+  let metaEvidence = new MetaEvidence(`${versionId.toString()}@${list.id}`)
+
+  metaEvidence.version = `${versionId.toString()}@${list.id}`
+  metaEvidence.versionId = versionId
+  metaEvidence.ipfsUri = event.params._evidence
+}
 
 export function handleRuling(event: Ruling): void {}
