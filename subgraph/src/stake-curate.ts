@@ -1,4 +1,4 @@
-import { BigInt } from "@graphprotocol/graph-ts"
+import { BigInt, log } from "@graphprotocol/graph-ts"
 import {
   StakeCurate,
   StakeCurateCreated,
@@ -24,14 +24,24 @@ import {
 import {
   Account,
   ArbitrationSetting,
-  MetaEvidence,
+  MetaList,
   Evidence,
   GeneralCounter,
   Item,
   List,
   ListVersion,
+  Column,
 } from "../generated/schema"
 import { decompress } from "./cint32"
+// funcs made shorter because otherwise they take multiple lines
+import {
+  ipfsToJsonObjOrNull,
+  JSONValueToString as jstr,
+  JSONValueToBool as jbool,
+  JSONValueToBigInt as jbig,
+  JSONValueToObject as jobj,
+  JSONValueToArray as jarr
+} from "./utils"
 
 export function handleStakeCurateCreated(event: StakeCurateCreated): void {
   let counter = GeneralCounter.load("0")
@@ -131,6 +141,118 @@ export function handleItemStartRemoval(event: ItemStartRemoval): void {}
 
 export function handleItemStopRemoval(event: ItemStopRemoval): void {}
 
+/**
+ * Used in both ListCreated and ListUpdated.
+ * Contains all logic required to create the MetaList, that is,
+ * IPFS, parsing, and saving the entity.
+ */
+function processMetaList(listVersion: ListVersion, metaListUri: string): void {
+  let metaList = new MetaList(listVersion.id)
+
+  metaList.version = listVersion.id
+  metaList.versionId = listVersion.versionId
+  metaList.ipfsUri = metaListUri
+  // consider it well formatted initially,
+  // set it to true as we fail parsing.
+  metaList.isMalformatted = false
+
+  // fetch the file
+  let obj = ipfsToJsonObjOrNull(metaListUri)
+
+  if (!obj) {
+    log.error("Error acquiring json from ipfs. metaList id: {}", [
+      listVersion.id,
+    ])
+    metaList.isMalformatted = true
+    metaList.save()
+    return
+  }
+
+  // get those fields
+  let policyUri = jstr(obj.get("policyUri"))
+  let defaultAgeForInclusion = jbig(obj.get("defaultAgeForInclusion"))
+  let listTitle = jstr(obj.get("listTitle"))
+  let listDescription = jstr(obj.get("listDescription"))
+  let itemName = jstr(obj.get("itemName"))
+  let itemNamePlural = jstr(obj.get("itemNamePlural"))
+  let logoUri = jstr(obj.get("logoUri"))
+  let isListOfLists = jbool(obj.get("isListOfLists"))
+  let hasHarddata = jbool(obj.get("hasHarddata"))
+  let harddataDescription = jstr(obj.get("harddataDescription"))
+
+  // these fields are considered mandatory. null -> malformatted
+  if (
+    !policyUri ||
+    !listTitle ||
+    !listDescription ||
+    isListOfLists === null ||
+    hasHarddata === null ||
+    (hasHarddata && !harddataDescription)
+  ) {
+    log.warning("metadata missing mandatory fields. metaList id: {}", [
+      metaList.id,
+    ])
+    metaList.isMalformatted = true
+  }
+
+  metaList.policyUri = policyUri
+  metaList.defaultAgeForInclusion = defaultAgeForInclusion
+  metaList.listTitle = listTitle
+  metaList.listDescription = listDescription
+  metaList.itemName = itemName
+  metaList.itemNamePlural = itemNamePlural
+  metaList.logoUri = logoUri
+  metaList.isListOfLists = !!isListOfLists
+  metaList.hasHarddata = !!hasHarddata
+  metaList.harddataDescription = harddataDescription
+
+  // process the columns
+  let columns = jarr(obj.get("columns"))
+
+  if (!columns) {
+    log.warning("wrong columns object. metaList id: {}", [
+      metaList.id,
+    ])
+    metaList.isMalformatted = true
+  } else {
+    // go through the columns and create entities
+    for (let i = 0; i < columns.length; i++) {
+      let columnObj = jobj(columns[i])
+      if (!columnObj) {
+        log.warning("bad column. metaList id: {}, column index: {}", [
+          metaList.id, i.toString()
+        ])
+        metaList.isMalformatted = true
+        break
+      }
+      let type = jstr(obj.get("type"))
+      let label = jstr(obj.get("label"))
+      let description = jstr(obj.get("description"))
+      let required = jbool(obj.get("required"))
+      let isIdentifier = jbool(obj.get("isIdentifier"))
+      if (type === null || label === null || description === null) {
+        log.warning("column has null mandatory value. metaList id: {}, column index: {}", [
+          metaList.id, i.toString()
+        ])
+        metaList.isMalformatted = true
+        break
+      }
+      // column is fine. create entity
+      let column = new Column(`${label}@${metaList.id}`)
+      column.metaList = metaList.id
+      column.type = type
+      column.label = label
+      column.description = description
+      column.required = !!required
+      column.isIdentifier = !!isIdentifier
+
+      column.save()
+    }
+  }
+
+  metaList.save()
+}
+
 export function handleListCreated(event: ListCreated): void {
   let counter = GeneralCounter.load("0") as GeneralCounter
 
@@ -146,32 +268,35 @@ export function handleListCreated(event: ListCreated): void {
   listVersion.arbitrationSetting = event.params._arbitrationSettingId.toString()
   listVersion.removalPeriod = event.params._removalPeriod
   listVersion.requiredStake = decompress(event.params._requiredStake)
-  // we can figure out the MetaEvidence id, but it doesn't exist yet
-  listVersion.metaEvidence = `0@${list.id}`
+  // we can figure out the MetaList id, but it doesn't exist yet
+  listVersion.metaList = listVersion.id
   listVersion.save()
 
   list.currentVersion = listVersion.id
   list.save()
 
+  processMetaList(listVersion, event.params._metalist)
+
   counter.listCount = counter.listCount.plus(BigInt.fromI32(1))
   counter.save()
+
 }
 
 export function handleListUpdated(event: ListUpdated): void {
   let list = List.load(event.params._listId.toString()) as List
 
-  let listVersion = new ListVersion(
-    `${list.versionCount.toString()}@${list.id}`
-  )
+  let listVersion = new ListVersion(`${list.versionCount.toString()}@${list.id}`)
   listVersion.list = list.id
   listVersion.versionId = list.versionCount
   listVersion.governor = event.params._governorId.toString()
   listVersion.arbitrationSetting = event.params._arbitrationSettingId.toString()
   listVersion.removalPeriod = event.params._removalPeriod
   listVersion.requiredStake = decompress(event.params._requiredStake)
-  // we can figure out the MetaEvidence id, but it doesn't exist yet
-  listVersion.metaEvidence = `${list.versionCount.toString()}@${list.id}`
+  // we can figure out the MetaList id, but it doesn't exist yet
+  listVersion.metaList = listVersion.id
   listVersion.save()
+
+  processMetaList(listVersion, event.params._metalist)
 
   list.versionCount = list.versionCount.plus(BigInt.fromI32(1))
   list.currentVersion = listVersion.id
@@ -179,17 +304,8 @@ export function handleListUpdated(event: ListUpdated): void {
 }
 
 export function handleMetaEvidence(event: MetaEvidenceEvent): void {
-  // metaEvidenceId points to the list
-  let list = List.load(event.params._metaEvidenceID.toString()) as List
-
-  // if the events are handled in the correct order, list or list update
-  // were handled before MetaEvidence. so, versionId already incremented.
-  let versionId = list.versionCount.minus(BigInt.fromI32(1))
-  let metaEvidence = new MetaEvidence(`${versionId.toString()}@${list.id}`)
-
-  metaEvidence.version = `${versionId.toString()}@${list.id}`
-  metaEvidence.versionId = versionId
-  metaEvidence.ipfsUri = event.params._evidence
+  // metaevidence is not handled atm
+  return
 }
 
 export function handleRuling(event: Ruling): void {}

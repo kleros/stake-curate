@@ -6,7 +6,7 @@ dataSources:
     name: StakeCurate
     network: kovan
     source:
-      address: "0xd71214Eb9835e0fa24314299a6500aac6aec3D91"
+      address: "0x87497c0af0075fd18a57c34cfea149f15ecadda7"
       abi: StakeCurate
     mapping:
       kind: ethereum/events
@@ -30,6 +30,8 @@ dataSources:
       eventHandlers:
         - event: StakeCurateCreated()
           handler: handleStakeCurateCreated()
+        - event: ChangedStakeCurateSettings(uint256,address)
+          handler: handleChangedStakeCurateSettings()
         - event: AccountCreated(address,uint32)
           handler: handleAccountCreated
         - event: AccountFunded(uint64,uint32)
@@ -58,9 +60,9 @@ dataSources:
           handler: handleItemStartRemoval
         - event: ItemStopRemoval(uint64)
           handler: handleItemStopRemoval
-        - event: ListCreated(uint64,uint32,uint32,uint64)
+        - event: ListCreated(uint64,uint32,uint32,uint64,string)
           handler: handleListCreated
-        - event: ListUpdated(uint64,uint64,uint32,uint32,uint64)
+        - event: ListUpdated(uint64,uint64,uint32,uint32,uint64,string)
           handler: handleListUpdated
         - event: MetaEvidence(indexed uint256,string)
           handler: handleMetaEvidence

@@ -81,7 +81,7 @@ type ListVersion @entity(immutable: true) {
   "Arbitration setting for this list"
   arbitrationSetting: ArbitrationSetting!
   "MetaEvidence for this version"
-  metaEvidence: MetaEvidence!
+  metaList: MetaList!
 }
 
 type ArbitrationSetting @entity(immutable: true) {
@@ -149,6 +149,8 @@ type Edition @entity(immutable: true) {
   harddata: Bytes!
   "Whether if this edition is malformatted"
   isMalformatted: Boolean!
+  "Whether if this edition is missing a required field"
+  missingRequired: Boolean!
   "When this edition was created"
   timestamp: BigInt!
   "Block at which this edition was created (used to call out frontrunning)"
@@ -182,26 +184,24 @@ type Dispute @entity {
   listVersion: ListVersion!
 }
 
-type MetaEvidence @entity(immutable: true) {
+type MetaList @entity(immutable: true) {
   "<versionId>@<listId>"
   id: ID!
-  "The version this MetaEvidence belongs to"
+  "The version this MetaList belongs to"
   version: ListVersion!
-  "The incremental id given to this metaEvidence"
+  "The incremental id given to this MetaList"
   versionId: BigInt!
-  "The raw metaEvidence IPFS URI"
+  "The raw MetaList IPFS URI"
   ipfsUri: String!
-
+  "Whether if the MetaList is malformatted, or file wasn't fetched"
+  isMalformatted: Boolean!
+  
   ### From this point on, these fields may be missing or malformatted.
-  ### Also, regular metadata won't be verified (title, rulingOptions, category...)
-  ### A malicious governor could put wrong human readable meanings for rulings!
-  ### This is a known problem. Governors are trusted to not do it, at risk at
-  ### rendering the list worthless.
 
   "Uri pointing to the policy document"
   policyUri: String
-  "Columns of the metaEvidence"
-  columns: [Column!]! @derivedFrom(field: "metaEvidence")
+  "Columns of this MetaList"
+  columns: [Column!]! @derivedFrom(field: "metaList")
   "Recommended age for considering an item inclusion canonical for queries"
   defaultAgeForInclusion: BigInt
   "Displayed name for this list"
@@ -229,8 +229,8 @@ type MetaEvidence @entity(immutable: true) {
 type Column @entity(immutable: true) {
   "<label>@<versionId>@<listId>"
   id: ID!
-  "MetaEvidence that holds this column"
-  metaEvidence: MetaEvidence!
+  "MetaList that holds this column"
+  metaList: MetaList!
   "Type of this column"
   type: String!
   "Label of this column"

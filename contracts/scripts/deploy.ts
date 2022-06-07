@@ -9,6 +9,9 @@ const sleep = (seconds: number): Promise<void> => {
   return new Promise((resolve) => setTimeout(resolve, seconds * 1000))
 }
 
+const WITHDRAWAL_PERIOD = 300
+const METAEVIDENCE = "/ipfs/QmRapgPnC9HM7CueMmJhMMdrh5J9YePBn6SxmS5G3xjwcL/metaevidence.json"
+
 async function main() {
   // Hardhat always runs the compile task when running scripts with its command
   // line interface.
@@ -19,8 +22,9 @@ async function main() {
 
   const withdrawalPeriod = 300
   // We get the contract to deploy
+  const wallet = new ethers.Wallet(process.env.PRIVATE_KEY)
   const StakeCurate = await ethers.getContractFactory("StakeCurate")
-  const stakeCurate = await StakeCurate.deploy(withdrawalPeriod) // withdrawalPeriod: 5min
+  const stakeCurate = await StakeCurate.deploy(WITHDRAWAL_PERIOD, wallet.address, METAEVIDENCE)
 
   await stakeCurate.deployed()
 
@@ -32,8 +36,11 @@ async function main() {
   // verify in etherscan
   const etherscanResponse = await run("verify:verify", {
     address: stakeCurate.address,
-    constructorArguments: [withdrawalPeriod],
+    constructorArguments: [WITHDRAWAL_PERIOD, wallet.address, METAEVIDENCE],
   })
+
+  // if you mess this up:
+  // npx hardhat verify --network kovan DEPLOYED_CONTRACT_ADDRESS 300 {governor} "/ipfs/QmRapgPnC9HM7CueMmJhMMdrh5J9YePBn6SxmS5G3xjwcL/metaevidence.json"
 
   console.log("Verified in etherscan", etherscanResponse)
 }
