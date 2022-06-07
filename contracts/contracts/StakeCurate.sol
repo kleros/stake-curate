@@ -28,7 +28,6 @@ contract StakeCurate is IArbitrable, IEvidence {
   /// @dev Item may be free even if "Used"! Use itemIsFree view. (because of removingTimestamp)
   enum ItemSlotState { Free, Used, Disputed }
 
-  uint256 public immutable ACCOUNT_WITHDRAW_PERIOD;
   uint256 internal constant RULING_OPTIONS = 2;
 
   /// @dev Some uint256 are lossily compressed into uint32 using Cint32.sol
@@ -80,6 +79,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // Used to initialize counters in the subgraph
   event StakeCurateCreated();
+  event ChangedStakeCurateSettings(uint256 _withdrawalPeriod, address governor);
 
   event AccountCreated(address _owner, uint32 _fullStake);
   event AccountFunded(uint64 _accountId, uint32 _fullStake);
@@ -89,9 +89,9 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
 
   event ListCreated(uint64 _governorId, uint32 _requiredStake, uint32 _removalPeriod,
-    uint64 _arbitrationSettingId);
+    uint64 _arbitrationSettingId, string _metalist);
   event ListUpdated(uint64 _listId, uint64 _governorId, uint32 _requiredStake,
-    uint32 _removalPeriod, uint64 _arbitrationSettingId);
+    uint32 _removalPeriod, uint64 _arbitrationSettingId, string _metalist);
 
   event ItemAdded(uint64 _itemSlot, uint64 _listId, uint64 _accountId, string _ipfsUri,
     bytes _harddata
@@ -107,6 +107,11 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // ----- CONTRACT STORAGE -----
 
+  // governor of stake curate, only used to update metaEvidence
+  address public governor;
+  uint256 public withdrawalPeriod;
+  uint256 public currentMetaEvidenceId;
+
   uint64 public listCount;
   uint64 public accountCount;
   uint64 public arbitrationSettingCount;
@@ -118,14 +123,39 @@ contract StakeCurate is IArbitrable, IEvidence {
   mapping(address => mapping(uint256 => uint64)) public arbitratorAndDisputeIdToDisputeSlot;
   mapping(uint64 => ArbitrationSetting) public arbitrationSettings;
 
-  /** @dev Constructs the StakeCurate contract.
+  /** 
+   * @dev Constructs the StakeCurate contract.
+   * @param _withdrawalPeriod Waiting period to execute a withdrawal
+   * @param _governor Address able to update withdrawalPeriod, metaEvidence, and change govenor
+   * @param _metaEvidence IPFS uri of the initial MetaEvidence
    */
-  constructor(uint256 _withdrawalPeriod) {
-    ACCOUNT_WITHDRAW_PERIOD = _withdrawalPeriod;
+  constructor(uint256 _withdrawalPeriod, address _governor, string memory _metaEvidence) {
+    withdrawalPeriod = _withdrawalPeriod;
+    governor = _governor;
     emit StakeCurateCreated();
+    emit ChangedStakeCurateSettings(_withdrawalPeriod, governor);
+    emit MetaEvidence(0, _metaEvidence);
   }
 
   // ----- PUBLIC FUNCTIONS -----
+
+  /**
+   * @dev Governor changes the general settings of Stake Curate
+   * @param _withdrawalPeriod Waiting period to execute a withdrawal
+   * @param _governor The new address able to change these settings
+   * @param _metaEvidence IPFS uri to the new MetaEvidence
+   */
+  function changeStakeCurateSettings(
+    uint256 _withdrawalPeriod, address _governor,
+    string calldata _metaEvidence
+  ) external {
+    require(msg.sender == governor, "Only governor can change these settings");
+    withdrawalPeriod = _withdrawalPeriod;
+    governor = _governor;
+    emit ChangedStakeCurateSettings(_withdrawalPeriod, _governor);
+    currentMetaEvidenceId++;
+    emit MetaEvidence(currentMetaEvidenceId, _metaEvidence);
+  }
 
   /// @dev Creates an account and starts it with funds dependent on value
   function createAccount() external payable {
@@ -187,7 +217,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       require(account.owner == msg.sender, "Only account owner can invoke account");
       uint32 timestamp = account.withdrawingTimestamp;
       require(timestamp != 0, "Withdrawal didn't start");
-      require(timestamp + ACCOUNT_WITHDRAW_PERIOD <= block.timestamp, "Withdraw period didn't pass");
+      require(timestamp + withdrawalPeriod <= block.timestamp, "Withdraw period didn't pass");
       uint256 fullStake = Cint32.decompress(account.fullStake);
       uint256 lockedStake = Cint32.decompress(account.lockedStake);
       uint256 freeStake = fullStake - lockedStake; // we needed to decompress fullstake anyway
@@ -220,14 +250,14 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _requiredStake The Cint32 version of the required stake per item.
    * @param _removalPeriod The amount of seconds an item needs to go through removal period to be removed.
    * @param _arbitrationSettingId Id of the internally stored arbitrator setting
-   * @param _metaEvidence IPFS uri of metaEvidence
+   * @param _metalist IPFS uri of metaEvidence
    */
   function createList(
     uint64 _governorId,
     uint32 _requiredStake,
     uint32 _removalPeriod,
     uint64 _arbitrationSettingId,
-    string calldata _metaEvidence
+    string calldata _metalist
   ) external {
     require(_governorId < accountCount, "Account must exist");
     require(_arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
@@ -238,8 +268,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
     list.arbitrationSettingId = _arbitrationSettingId;
-    emit ListCreated(_governorId, _requiredStake, _removalPeriod, _arbitrationSettingId);
-    emit MetaEvidence(listId, _metaEvidence);
+    emit ListCreated(
+      _governorId, _requiredStake, _removalPeriod, _arbitrationSettingId, _metalist
+    );
   }
 
   /**
@@ -248,8 +279,8 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _governorId Id of the new governor.
    * @param _requiredStake Cint32 version of the new required stake per item.
    * @param _removalPeriod Seconds until item is considered removed after starting removal.
-   * @param _arbitrationSettingId Id of the new arbitrator extra data
-   * @param _metaEvidence IPFS uri of metaEvidence
+   * @param _arbitrationSettingId Id of the new arbitrator extra data.
+   * @param _metalist IPFS uri of the metadata of this list.
    */
   function updateList(
     uint64 _listId,
@@ -257,7 +288,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _requiredStake,
     uint32 _removalPeriod,
     uint64 _arbitrationSettingId,
-    string calldata _metaEvidence
+    string calldata _metalist
   ) external {
     require(_governorId < accountCount, "Account must exist");
     require(_arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
@@ -267,8 +298,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
     list.arbitrationSettingId = _arbitrationSettingId;
-    emit ListUpdated(_listId, _governorId, _requiredStake, _removalPeriod, _arbitrationSettingId);
-    emit MetaEvidence(_listId, _metaEvidence);
+    emit ListUpdated(
+      _listId, _governorId, _requiredStake, _removalPeriod, _arbitrationSettingId, _metalist
+    );
   }
 
   /**
@@ -479,7 +511,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ItemChallenged(_itemSlot, disputeSlot);
     // ERC 1497
     uint256 evidenceGroupId = getEvidenceGroupId(_itemSlot);
-    emit Dispute(arbSetting.arbitrator, arbitratorDisputeId, item.listId, evidenceGroupId);
+    emit Dispute(arbSetting.arbitrator, arbitratorDisputeId, currentMetaEvidenceId, evidenceGroupId);
     emit Evidence(arbSetting.arbitrator, evidenceGroupId, msg.sender, _reason);
   }
 

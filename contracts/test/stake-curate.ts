@@ -4,16 +4,19 @@ import { waffleChai } from "@ethereum-waffle/chai"
 import { Bytes, Contract, Signer } from "ethers"
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers"
 
+const IPFS_URI = "/ipfs/Qme7ss3ARVgxv6rXqVPiikMJ8u2NLgmgszg13pYrDKEoiu/item.json"
+
+
 use(waffleChai)
 const ACCOUNT_WITHDRAW_PERIOD = 604_800 // 1 week
 
-const deployContracts = async (deployer: Signer) => {
+const deployContracts = async (deployer: SignerWithAddress) => {
   const Arbitrator = await ethers.getContractFactory("Arbitrator", deployer)
   const arbitrator = await Arbitrator.deploy()
   await arbitrator.deployed()
 
   const StakeCurate = await ethers.getContractFactory("StakeCurate", deployer)
-  const stakeCurate = await StakeCurate.deploy(ACCOUNT_WITHDRAW_PERIOD)
+  const stakeCurate = await StakeCurate.deploy(ACCOUNT_WITHDRAW_PERIOD, deployer.address, IPFS_URI)
   await stakeCurate.deployed()
   await stakeCurate.connect(deployer).createArbitrationSetting(arbitrator.address, "0x")
 
@@ -32,7 +35,6 @@ describe("Stake Curate", async () => {
   const CHALLENGE_FEE = 1_000_000_000 // also used for appeals
 
   // to get realistic gas costs
-  const IPFS_URI = "/ipfs/Qme7ss3ARVgxv6rXqVPiikMJ8u2NLgmgszg13pYrDKEoiu/item.json"
   const noBytes: Bytes = []
 
   const [deployerId, governorId, challengerId, hoboId, interloperId, adopterId] = [0, 1, 2, 3, 4, 5]
@@ -44,8 +46,33 @@ describe("Stake Curate", async () => {
   const addItemArgs = [itemSlot, listId, deployerId, IPFS_URI, noBytes]
   const challengeItemArgs = [challengerId, itemSlot, disputeSlot, minAmount, IPFS_URI, {value: CHALLENGE_FEE}]
 
+  describe("deployment and settings", () => {
+    beforeEach("Deploying", async () => {
+      [deployer, challenger, governor, interloper, hobo, adopter] = await ethers.getSigners();
+      ({ arbitrator, stakeCurate } = await deployContracts(deployer))
+    })
+
+    // i dont know how to test deployment
+    // it should emit a "ChangedStakeCurateSettings"
+    // and a MetaEvidence with metaEvidenceId == 0
+
+    it("Change settings", async () => {
+      await expect(stakeCurate.connect(deployer)
+        .changeStakeCurateSettings(ACCOUNT_WITHDRAW_PERIOD, deployer.address, IPFS_URI))
+        .to.emit(stakeCurate, "ChangedStakeCurateSettings")
+        .withArgs(ACCOUNT_WITHDRAW_PERIOD, deployer.address)
+        .to.emit(stakeCurate, "MetaEvidence")
+        .withArgs(1, IPFS_URI)
+    })
+
+    it("Interloper cannot change settings", async () => {
+      await expect(stakeCurate.connect(interloper)
+        .changeStakeCurateSettings(ACCOUNT_WITHDRAW_PERIOD, deployer.address, IPFS_URI))
+        .to.revertedWith("Only governor can change these settings")
+    })
+  })
+
   describe("account, withdraws...", () => {
-    let [deployer, challenger, interloper, governor, hobo, adopter]: SignerWithAddress[] = []
     let [arbitrator, stakeCurate]: Contract[] = []
 
     beforeEach("Deploying", async () => {
@@ -173,18 +200,14 @@ describe("Stake Curate", async () => {
     it("Creates a list", async () => {
       await expect(stakeCurate.connect(deployer).createList(...createListArgs))
         .to.emit(stakeCurate, "ListCreated")
-        .withArgs(governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD, arbitratorSettingId)
-        .to.emit(stakeCurate, "MetaEvidence")
-        .withArgs(listId, IPFS_URI)
+        .withArgs(governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD, arbitratorSettingId, IPFS_URI)
     })
 
     it("Updates a list", async () => {
       await stakeCurate.connect(deployer).createList(...createListArgs)
       await expect(stakeCurate.connect(governor).updateList(listId, ...createListArgs))
         .to.emit(stakeCurate, "ListUpdated")
-        .withArgs(listId, governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD, arbitratorSettingId)
-        .to.emit(stakeCurate, "MetaEvidence")
-        .withArgs(listId, IPFS_URI)
+        .withArgs(listId, governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD, arbitratorSettingId, IPFS_URI)
     })
 
     it("Interloper cannot update the list", async () => {
