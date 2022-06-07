@@ -623,9 +623,8 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   function getEvidenceGroupId(uint64 _itemSlot) public view returns (uint256) {
     // evidenceGroupId is obtained from the (itemSlot, submissionBlock) pair
-    return (uint256(keccak256(
-      abi.encodePacked(_itemSlot, items[_itemSlot].submissionBlock)
-    )));
+    // I couldn't figure out how to encodePacked on the subgraph, plus this is cheaper.
+    return (uint256(_itemSlot << 32 + items[_itemSlot].submissionBlock));
   }
 
   // ----- PURE FUNCTIONS -----
