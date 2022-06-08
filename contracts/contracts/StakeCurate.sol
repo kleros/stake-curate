@@ -360,6 +360,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     List memory list = lists[item.listId];
     require(freeStake >= Cint32.decompress(list.requiredStake), "Cannot afford to edit this item");
     
+    item.committedStake = list.requiredStake;
     item.harddata = _harddata;
 
     emit ItemEdited(_itemSlot, _ipfsUri, _harddata);
