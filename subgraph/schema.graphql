@@ -96,8 +96,10 @@ type ArbitrationSetting @entity(immutable: true) {
 }
 
 type Item @entity {
-  "<blockNumber>@<itemSlot>"
+  "<localId>@<listId>"
   id: ID!
+  "The incremental id this item holds within its list"
+  localId: BigInt!
   "Item slot in which the item resides"
   itemSlot: BigInt!
   "Blocknumber in which the item was submitted"
@@ -114,8 +116,6 @@ type Item @entity {
   account: Account!
   "The List in which the item was submitted"
   list: List!
-  "The incremental id this item holds within its list"
-  localId: BigInt!
   "How many editions does this item have"
   editionCount: BigInt!
   "All the editions from this item"
@@ -133,7 +133,7 @@ type Item @entity {
 }
 
 type Edition @entity(immutable: true) {
-  "<localId>@<blockNumber>@<itemSlot>"
+  "<localId>@<itemId>"
   id: ID!
   "The incremental id this edition holds within its item"
   localId: BigInt!
@@ -146,7 +146,7 @@ type Edition @entity(immutable: true) {
   "Props contained in this edition"
   props: [Prop!]! @derivedFrom(field: "edition")
   "On-chain arbitrary data"
-  harddata: Bytes!
+  harddata: Bytes
   "Whether if this edition is malformatted"
   isMalformatted: Boolean!
   "Whether if this edition is missing a required field"
@@ -160,7 +160,7 @@ type Edition @entity(immutable: true) {
 }
 
 type Dispute @entity {
-  "<localId>@<blockNumber>@<itemSlot>"
+  "<localId>@<itemId>"
   id: ID!
   "Slot in which the dispute lives"
   disputeSlot: BigInt!
@@ -227,7 +227,7 @@ type MetaList @entity(immutable: true) {
 }
 
 type Column @entity(immutable: true) {
-  "<label>@<versionId>@<listId>"
+  "<label>@<metaListId>"
   id: ID!
   "MetaList that holds this column"
   metaList: MetaList!
@@ -244,16 +244,18 @@ type Column @entity(immutable: true) {
 }
 
 type Prop @entity(immutable: true) {
-  "<label>@<editionId>@<blockNumber>@<itemSlot>"
+  "<label>@<editionId>"
   id: ID!
   "Edition that holds this props"
   edition: Edition!
-  "Value of this prop"
-  value: String!
-  "Type of this prop"
-  type: String!
   "Label of this prop"
   label: String!
+  "Value of this prop"
+  value: String
+  "Was required, but its value is null"
+  missing: Boolean!
+  "There is no column for its linked metalist"
+  intrusive: Boolean!
 }
 
 type EvidenceThread @entity {

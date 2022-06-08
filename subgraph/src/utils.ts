@@ -91,7 +91,7 @@ export function JSONValueToArray(
   }
 }
 
-export function ipfsToJsonObjOrNull(uri: string) {
+export function ipfsToJsonValueOrNull(uri: string) {
   let jsonBytes = ipfs.cat(uri)
   // ipfsUri could be malformatted or file non-available.
   if (!jsonBytes) {
@@ -105,11 +105,5 @@ export function ipfsToJsonObjOrNull(uri: string) {
     return null
   }
 
-  let jsonObj = jsonObjValue.toObject()
-  if (!jsonObj) {
-    log.error(`Error converting json object value to map, from uri {}`, [uri])
-    return null
-  }
-
-  return jsonObj
+  return jsonObjValue
 }
