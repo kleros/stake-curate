@@ -79,7 +79,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // Used to initialize counters in the subgraph
   event StakeCurateCreated();
-  event ChangedStakeCurateSettings(uint256 _withdrawalPeriod, address governor);
+  event ChangedStakeCurateSettings(uint256 _withdrawalPeriod, address _governor);
 
   event AccountCreated(address _owner, uint32 _fullStake);
   event AccountFunded(uint64 _accountId, uint32 _fullStake);

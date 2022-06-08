@@ -23,6 +23,10 @@ type GeneralCounter @entity {
   accountCount: BigInt!
   "Counts how many arbitration settings exist"
   arbitrationSettingCount: BigInt!
+  "How much time must elapse from request to withdraw a stake"
+  withdrawalPeriod: BigInt!
+  "Address able to change some parameters in the contract"
+  governor: Bytes!
 }
 
 type Account @entity {

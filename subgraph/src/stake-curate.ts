@@ -25,6 +25,7 @@ import {
   ListUpdated,
   MetaEvidence as MetaEvidenceEvent,
   Ruling,
+  ChangedStakeCurateSettings,
 } from "../generated/StakeCurate/StakeCurate"
 import {
   Account,
@@ -52,14 +53,19 @@ import {
 } from "./utils"
 
 export function handleStakeCurateCreated(event: StakeCurateCreated): void {
-  let counter = GeneralCounter.load("0")
-  if (!counter) {
-    counter = new GeneralCounter("0")
-    counter.accountCount = BigInt.fromU32(0)
-    counter.listCount = BigInt.fromU32(0)
-    counter.arbitrationSettingCount = BigInt.fromU32(0)
-    counter.save()
-  }
+  let counter = new GeneralCounter("0")
+  counter.accountCount = BigInt.fromU32(0)
+  counter.listCount = BigInt.fromU32(0)
+  counter.arbitrationSettingCount = BigInt.fromU32(0)
+  counter.save()
+}
+
+export function handleChangedStakeCurateSettings(event: ChangedStakeCurateSettings): void {
+  // stake curate was deployed
+  let counter = new GeneralCounter("0") as GeneralCounter
+  counter.withdrawalPeriod = event.params._withdrawalPeriod
+  counter.governor = event.params._governor
+  counter.save()
 }
 
 export function handleAccountCreated(event: AccountCreated): void {
