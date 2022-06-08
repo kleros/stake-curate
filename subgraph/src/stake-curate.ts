@@ -1,9 +1,4 @@
-import {
-  BigInt,
-  Bytes,
-  ethereum,
-  log,
-} from "@graphprotocol/graph-ts"
+import { BigInt, Bytes, ethereum, log } from "@graphprotocol/graph-ts"
 import {
   StakeCurate,
   StakeCurateCreated,
@@ -40,6 +35,7 @@ import {
   EvidenceThread,
   Edition,
   Prop,
+  ItemSlot,
 } from "../generated/schema"
 import { decompress } from "./cint32"
 // funcs made shorter because otherwise they take multiple lines
@@ -60,7 +56,9 @@ export function handleStakeCurateCreated(event: StakeCurateCreated): void {
   counter.save()
 }
 
-export function handleChangedStakeCurateSettings(event: ChangedStakeCurateSettings): void {
+export function handleChangedStakeCurateSettings(
+  event: ChangedStakeCurateSettings
+): void {
   // stake curate was deployed
   let counter = new GeneralCounter("0") as GeneralCounter
   counter.withdrawalPeriod = event.params._withdrawalPeriod
@@ -158,6 +156,7 @@ function processEdition(
   // consider it well formatted initially, set it to true if we fail parsing.
   edition.isMalformatted = false
   edition.missingRequired = false
+  edition.hasIntrusion = false
   edition.timestamp = block.timestamp
   edition.blockNumber = block.number
   // get listVersion
@@ -202,12 +201,16 @@ function processEdition(
     // check if it was uncalled for, or required and null. to do so, get the mapped column.
     let column = Column.load(`${label}@${list.currentVersion}`)
     if (!column) {
+      edition.hasIntrusion = true
       prop.intrusive = true
     } else if (column.required && prop.value === null) {
+      edition.missingRequired = true
       prop.missing = true
     }
     prop.save()
   }
+
+  edition.save()
 }
 
 export function handleItemAdded(event: ItemAdded): void {
@@ -215,8 +218,7 @@ export function handleItemAdded(event: ItemAdded): void {
   let itemLocalId = list.itemCount
   list.itemCount = list.itemCount.plus(BigInt.fromU32(1))
   list.save()
-  let id = `${itemLocalId}@${list.id}`
-  let item = new Item(id)
+  let item = new Item(`${itemLocalId}@${list.id}`)
   item.localId = itemLocalId
   item.itemSlot = event.params._itemSlot
   item.submissionBlock = event.block.number
@@ -248,6 +250,10 @@ export function handleItemAdded(event: ItemAdded): void {
   item.thread = evidenceThread.id
   item.save()
 
+  let itemSlot = new ItemSlot(event.params._itemSlot.toString())
+  itemSlot.item = item.id
+  itemSlot.save()
+
   processEdition(
     item,
     event.params._ipfsUri,
@@ -257,14 +263,25 @@ export function handleItemAdded(event: ItemAdded): void {
 }
 
 export function handleItemEdited(event: ItemEdited): void {
-  let stakeCurateContract = StakeCurate.bind(event.address)
+  // editing an item also recommits stake.
+  let itemSlot = ItemSlot.load(event.params._itemSlot.toString()) as ItemSlot
+  let item = Item.load(itemSlot.item) as Item
+  let list = List.load(item.list) as List
+  let listVersion = ListVersion.load(list.currentVersion) as ListVersion
+  item.committedStake = listVersion.requiredStake
+  item.save()
+
+  processEdition(
+    item,
+    event.params._ipfsUri,
+    event.params._harddata,
+    event.block
+  )
 }
 
 export function handleItemAdopted(event: ItemAdopted): void {}
 
 export function handleItemChallenged(event: ItemChallenged): void {}
-
-
 
 export function handleItemRecommitted(event: ItemRecommitted): void {}
 

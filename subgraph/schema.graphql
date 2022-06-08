@@ -29,6 +29,15 @@ type GeneralCounter @entity {
   governor: Bytes!
 }
 
+# Mainly to prevent subgraph from using contract.bind
+# For advanced users, it could be useful in the frontend 
+type ItemSlot @entity {
+  "<slotId>"
+  id: ID!
+  "The item this slot contains"
+  item: Item! # entity is created iff filled. so, non-nullable.
+}
+
 type Account @entity {
   "<accountId>"
   id: ID!
@@ -110,6 +119,9 @@ type Item @entity {
   submissionBlock: BigInt!
   "Status of the item"
   status: ItemStatus!
+  # You need to store "committedStake", because of recommitItem,
+  # as it doesn't produce an edition. Otherwise you could fetch it from
+  # the current list version.
   "Stake amount committed to preserving the item (uncompressed)"
   committedStake: BigInt!
   "Whether if the item is currently being removed. It might have been removed already"
@@ -153,8 +165,10 @@ type Edition @entity(immutable: true) {
   harddata: Bytes
   "Whether if this edition is malformatted"
   isMalformatted: Boolean!
-  "Whether if this edition is missing a required field"
+  "Whether if this edition is missing a required prop"
   missingRequired: Boolean!
+  "Whether if this edition contains an unsolicited prop"
+  hasIntrusion: Boolean!
   "When this edition was created"
   timestamp: BigInt!
   "Block at which this edition was created (used to call out frontrunning)"
