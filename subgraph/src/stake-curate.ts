@@ -57,6 +57,16 @@ export function handleStakeCurateCreated(event: StakeCurateCreated): void {
   counter.listCount = BigInt.fromU32(0)
   counter.arbitrationSettingCount = BigInt.fromU32(0)
   counter.save()
+  
+  /// hack below. consider reverting so this doesn't happen in the first place todo
+  // the contract allows to submit evidence to unexistant item slots,
+  // they will have evidenceGroupId "0", so create a thread for it
+  // to avoid crashing.
+  let thread = new EvidenceThread("0")
+  thread.evidenceGroupId = BigInt.fromU32(0)
+  thread.evidenceCount = BigInt.fromU32(0)
+  thread.item = `0@0` // needs to point somewhere, so, item 0 of list 0.
+  thread.save()
 }
 
 export function handleChangedStakeCurateSettings(
