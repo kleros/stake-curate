@@ -14,6 +14,13 @@ enum DisputeStatus {
   Resolved
 }
 
+enum Ruling {
+  "The submitter side won the dispute and item stays"
+  Keep
+  "The challenger side won the dispute and item is removed"
+  Remove
+}
+
 type GeneralCounter @entity {
   "The id is always the string '0'"
   id: ID!
@@ -180,26 +187,40 @@ type Edition @entity(immutable: true) {
 type Dispute @entity {
   "<localId>@<itemId>"
   id: ID!
-  "Slot in which the dispute lives"
-  disputeSlot: BigInt!
   "How many disputes had been made for this item at dispute creation"
   localId: BigInt!
+  "Slot in which the dispute lives"
+  disputeSlot: BigInt!
+  "Identifier the arbitrator uses for disputes"
+  arbitratorDisputeId: BigInt!
   "Status of the dispute"
   status: DisputeStatus!
+  "Ruling of the dispute. Null when pending"
+  ruling: Ruling
   "Item whose inclusion is being disputed"
   item: Item!
-  "Account of the challenger, who will be rewarded if winning"
-  challenger: Account!
-  "Arbitration setting for the dispute"
-  arbitrationSetting: ArbitrationSetting!
-  "Amount that rewarded to challenger upon successful challenge (uncompressed)"
+  # This is an address because the challenger account is not emitted.
+  # It doesn't matter since StakeCurate only acts on the address of the account.
+  "Address of the challenger, who will be rewarded if winning"
+  challenger: Bytes!
+  "List version at dispute creation"
+  listVersion: ListVersion!
+  "Amount rewarded to challenger upon successful challenge (uncompressed)"
   stake: BigInt!
   "Moment in which this dispute was created"
   creationTimestamp: BigInt!
   "Moment in which this dispute was resolved"
   resolutionTimestamp: BigInt
-  "List version at dispute creation"
-  listVersion: ListVersion!
+  "MetaEvidence linked to this Dispute"
+  metaEvidence: MetaEvidence!
+}
+
+# Get the Dispute belonging to a certain disputeId and arbitrator pair
+type DisputeCheckpoint @entity(immutable: true) {
+  "<disputeId>@<arbitrator>"
+  id: ID!
+  "Dispute referenced by this checkpoint"
+  dispute: Dispute!
 }
 
 type MetaList @entity(immutable: true) {
@@ -298,6 +319,12 @@ type Evidence @entity(immutable: true) {
   thread: EvidenceThread!
   "Raw ipfs uri of the json of this evidence"
   rawUri: String!
+  "The address that has submitted the Evidence"
+  party: Bytes!
+  "Adress of the arbitrator the evidence is submitted to"
+  arbitrator: Bytes!
+  "Whether if the evidence is malformatted"
+  isMalformatted: Boolean!
 
   # You cannot point to the historical edition or listVersion
   # because you don't know if this evidence is being submitted
@@ -314,4 +341,11 @@ type Evidence @entity(immutable: true) {
   fileUri: String
   "Extension of this file"
   fileTypeExtension: String
+}
+
+type MetaEvidence @entity(immutable: true) {
+  "<metaEvidenceId>"
+  id: ID!
+  "Link to ipfs"
+  uri: String!
 }

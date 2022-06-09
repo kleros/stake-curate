@@ -7,7 +7,7 @@ import {
   AccountStartWithdraw,
   AccountWithdrawn,
   ArbitrationSettingCreated,
-  Dispute,
+  Dispute as DisputeEvent,
   Evidence as EvidenceEvent,
   ItemAdded,
   ItemAdopted,
@@ -36,6 +36,9 @@ import {
   Edition,
   Prop,
   ItemSlot,
+  Dispute,
+  DisputeCheckpoint,
+  MetaEvidence,
 } from "../generated/schema"
 import { decompress } from "./cint32"
 // funcs made shorter because otherwise they take multiple lines
@@ -131,9 +134,67 @@ export function handleArbitrationSettingCreated(
   counter.save()
 }
 
-export function handleDispute(event: Dispute): void {}
+export function handleDispute(event: DisputeEvent): void {
+  // add arbitratorDisputeId and metaEvidence to our Dispute entity.
+  // get the dispute by using the evidenceGroupID
+  // the dispute already exists because it's created at handleItemChallenge
+  let thread = EvidenceThread.load(event.params._evidenceGroupID.toString()) as EvidenceThread
+  let item = Item.load(thread.item) as Item
+  let dispute = Dispute.load(item.currentDispute as string) as Dispute
 
-export function handleEvidence(event: EvidenceEvent): void {}
+  dispute.arbitratorDisputeId = event.params._disputeID
+  dispute.metaEvidence = event.params._metaEvidenceID.toString()
+  dispute.save()
+
+  // this entity is made to find the Dispute on Ruling
+  let checkpointId = `${event.params._disputeID.toString()}@${event.transaction.from.toHexString()}`
+  let disputeCheckpoint = DisputeCheckpoint.load(checkpointId)
+  if (disputeCheckpoint !== null) {
+    // it shouldn't exist.
+    log.warning("arbitrator didn't respect disputeID uniqueness, ignoring dispute. checkpoint {}", [
+      disputeCheckpoint.id,
+    ])
+    return
+  }
+
+  disputeCheckpoint = new DisputeCheckpoint(checkpointId)
+  disputeCheckpoint.dispute = dispute.id
+  disputeCheckpoint.save()
+}
+
+export function handleEvidence(event: EvidenceEvent): void {
+  let thread = EvidenceThread.load(event.params._evidenceGroupID.toString()) as EvidenceThread
+  let localId = thread.evidenceCount
+  thread.evidenceCount = thread.evidenceCount.plus(BigInt.fromU32(1))
+  thread.save()
+
+  let evidence = new Evidence(`${localId.toString()}@${thread.id}`)
+  // start with the sure data
+  evidence.localId = localId
+  evidence.thread = thread.id
+  evidence.rawUri = event.params._evidence
+  evidence.party = event.params._party
+  evidence.arbitrator = event.params._arbitrator
+  evidence.isMalformatted = false // optimistic
+
+  // commence ipfs parsing
+  let obj = jobj(ipfsToJsonValueOrNull(evidence.rawUri))
+
+  if (!obj) {
+    log.error("Error acquiring json from ipfs. evidence id: {}", [
+      evidence.id,
+    ])
+    evidence.isMalformatted = true
+    evidence.save()
+    return
+  }
+  // parse the fields. note that no longer does a null result in malformat
+  evidence.name = jstr(obj.get("name"))
+  evidence.description = jstr(obj.get("description"))
+  evidence.fileUri = jstr(obj.get("fileUri"))
+  evidence.fileTypeExtension = jstr(obj.get("fileTypeExtension"))
+  evidence.save()
+}
 
 function processEdition(
   item: Item,
@@ -279,15 +340,94 @@ export function handleItemEdited(event: ItemEdited): void {
   )
 }
 
-export function handleItemAdopted(event: ItemAdopted): void {}
+export function handleItemAdopted(event: ItemAdopted): void {
+  let itemSlot = ItemSlot.load(event.params._itemSlot.toString()) as ItemSlot
+  let item = Item.load(itemSlot.item) as Item
+  // adopting recommits stake
+  let list = List.load(item.list) as List
+  let listVersion = ListVersion.load(list.currentVersion) as ListVersion
+  item.committedStake = listVersion.requiredStake
+  // regular adoption flow
+  item.account = event.params._adopterId.toString()
+  item.removing = false
+  item.removalTimestamp = BigInt.fromU32(0)
+  item.save()
+}
 
-export function handleItemChallenged(event: ItemChallenged): void {}
+export function handleItemRecommitted(event: ItemRecommitted): void {
+  let itemSlot = ItemSlot.load(event.params._itemSlot.toString()) as ItemSlot
+  let item = Item.load(itemSlot.item) as Item
+  let list = List.load(item.list) as List
+  let listVersion = ListVersion.load(list.currentVersion) as ListVersion
+  item.committedStake = listVersion.requiredStake
+  item.save()
+}
 
-export function handleItemRecommitted(event: ItemRecommitted): void {}
+export function handleItemStartRemoval(event: ItemStartRemoval): void {
+  let itemSlot = ItemSlot.load(event.params._itemSlot.toString()) as ItemSlot
+  let item = Item.load(itemSlot.item) as Item
+  // there's nothing else to it, is it?
+  item.removing = true
+  item.removalTimestamp = event.block.timestamp
+  item.save()
+}
 
-export function handleItemStartRemoval(event: ItemStartRemoval): void {}
+export function handleItemStopRemoval(event: ItemStopRemoval): void {
+  let itemSlot = ItemSlot.load(event.params._itemSlot.toString()) as ItemSlot
+  let item = Item.load(itemSlot.item) as Item
+  // there's nothing else to it, is it?
+  item.removing = false
+  item.removalTimestamp = BigInt.fromU32(0)
+  item.save()
+}
 
-export function handleItemStopRemoval(event: ItemStopRemoval): void {}
+export function handleItemChallenged(event: ItemChallenged): void {
+  let itemSlot = ItemSlot.load(event.params._itemSlot.toString()) as ItemSlot
+  let item = Item.load(itemSlot.item) as Item
+  // put item in "dispute" mode
+  let disputeLocalId = item.disputeCount
+  item.status = "Disputed"
+  item.disputeCount = item.disputeCount.plus(BigInt.fromU32(1))
+
+  let dispute = new Dispute(`${disputeLocalId.toString()}@${item.id}`)
+  item.currentDispute = dispute.id
+
+  // mind this is dubious and may be changed in StakeCurate.sol to reset on failed challenge
+  // todo
+  item.removalTimestamp = BigInt.fromU32(0)
+
+  // create the dispute
+  dispute.localId = disputeLocalId
+  dispute.disputeSlot = event.params._disputeSlot
+  // dispute.arbitratorDisputeId is set at handleDispute
+  dispute.status = "Ongoing"
+  dispute.ruling = null
+  dispute.item = item.id
+  dispute.challenger = event.transaction.from
+  let list = List.load(item.list) as List
+  let listVersion = ListVersion.load(list.currentVersion) as ListVersion
+  dispute.listVersion = listVersion.id
+  // getting the stake of the dispute is a bit involved:
+  // 1. the stake is equal to min(listVersion.requiredStake, account.freeStake)
+  let account = Account.load(item.account) as Account
+  let stake = BigInt.compare(listVersion.requiredStake, account.freeStake) === -1
+    ? listVersion.requiredStake
+    : account.freeStake
+  // 2. recommit this stake to the item, because that's what the contract does
+  item.committedStake = stake
+  // 3. update the freeStake and lockedStake amounts on the account
+  account.lockedStake = account.lockedStake.plus(stake)
+  account.freeStake = account.freeStake.minus(stake)
+  account.save()
+  // 4. set as dispute stake
+  dispute.stake = stake
+
+  dispute.creationTimestamp = event.block.timestamp
+  dispute.resolutionTimestamp = null
+  // dispute.metaEvidence is set on DisputeEvent
+  dispute.save()
+  item.save()
+}
 
 /**
  * Used in both ListCreated and ListUpdated.
@@ -453,8 +593,48 @@ export function handleListUpdated(event: ListUpdated): void {
 }
 
 export function handleMetaEvidence(event: MetaEvidenceEvent): void {
-  // metaevidence is not handled atm
+  let metaEvidence = new MetaEvidence(event.params._metaEvidenceID.toString())
+  metaEvidence.uri = event.params._evidence
+  metaEvidence.save()
   return
 }
 
-export function handleRuling(event: Ruling): void {}
+export function handleRuling(event: Ruling): void {
+  let checkpoint = DisputeCheckpoint.load(
+    `${event.params._disputeID}@${event.params._arbitrator.toHexString()}`
+  ) as DisputeCheckpoint
+  let dispute = Dispute.load(checkpoint.dispute) as Dispute
+
+  dispute.status = "Resolved"
+  // ruling === 0 || ruling === 1 -> keep, otherwise remove.
+  let ruling = event.params._ruling.lt(BigInt.fromU32(2)) ? "Keep" : "Remove"
+  dispute.ruling = ruling
+  dispute.resolutionTimestamp = event.block.timestamp
+  dispute.save()
+
+  // depending on the ruling, the logic is different. item and account endure changes
+  let item = Item.load(dispute.item) as Item
+  let account = Account.load(item.account) as Account
+
+  item.currentDispute = null
+
+  if (ruling === "Keep") {
+    // free stake in account
+    account.freeStake = account.freeStake.plus(dispute.stake)
+    account.lockedStake = account.lockedStake.minus(dispute.stake)
+    
+    item.status = "Included"
+    if (item.removing) {
+      item.removalTimestamp = event.block.timestamp
+    }
+  } else {
+    // send stake to challenger
+    account.fullStake = account.fullStake.minus(dispute.stake)
+    account.lockedStake = account.lockedStake.minus(dispute.stake)
+
+    item.status = "Excluded"
+  }
+
+  item.save()
+  account.save()
+}

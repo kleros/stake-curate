@@ -13,6 +13,8 @@ import "@kleros/erc-792/contracts/IArbitrator.sol";
 import "@kleros/erc-792/contracts/erc-1497/IEvidence.sol";
 import "./Cint32.sol";
 
+/// note: should i prevent challenging an item with the account can withdraw?
+
 /**
  * @title Stake Curate
  * @author Green
