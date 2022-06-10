@@ -17,3 +17,5 @@ To set your access token:
 ## Dev
 
 To deploy to your own instance on a testnet, modify the script to use your own subgraph instance. For example, change `deploy:kovan` to `graph deploy --product hosted-service <your-username>/curate-kovan`.
+
+`npx graph deploy --product hosted-service greenlucid/stake-curate-kovan`

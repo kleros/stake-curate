@@ -25,9 +25,9 @@ export function JSONValueToString(value: JSONValue | null): string | null {
   }
 }
 
-export function JSONValueToBool(value: JSONValue | null): boolean | null {
+export function JSONValueToBool(value: JSONValue | null): boolean {
   if (value == null || value.isNull()) {
-    return null
+    return false
   }
 
   switch (value.kind) {
@@ -36,13 +36,11 @@ export function JSONValueToBool(value: JSONValue | null): boolean | null {
     case JSONValueKind.STRING:
       if (value.toString() === "true") {
         return true
-      } else if (value.toString() === "false") {
-        return false
       } else {
-        return null
+        return false
       }
     default:
-      return null
+      return false
   }
 }
 
@@ -91,7 +89,7 @@ export function JSONValueToArray(
   }
 }
 
-export function ipfsToJsonValueOrNull(uri: string) {
+export function ipfsToJsonValueOrNull(uri: string): JSONValue | null {
   let jsonBytes = ipfs.cat(uri)
   // ipfsUri could be malformatted or file non-available.
   if (!jsonBytes) {

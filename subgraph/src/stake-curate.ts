@@ -56,6 +56,10 @@ export function handleStakeCurateCreated(event: StakeCurateCreated): void {
   counter.accountCount = BigInt.fromU32(0)
   counter.listCount = BigInt.fromU32(0)
   counter.arbitrationSettingCount = BigInt.fromU32(0)
+  // these two will be overwritten by first setting
+  counter.withdrawalPeriod = BigInt.fromU32(0) 
+  counter.governor = event.transaction.from
+
   counter.save()
   
   /// hack below. consider reverting so this doesn't happen in the first place todo
@@ -483,8 +487,6 @@ function processMetaList(listVersion: ListVersion, metaListUri: string): void {
     !policyUri ||
     !listTitle ||
     !listDescription ||
-    isListOfLists === null ||
-    hasHarddata === null ||
     (hasHarddata && !harddataDescription)
   ) {
     log.warning("metadata missing mandatory fields. metaList id: {}", [
@@ -500,8 +502,8 @@ function processMetaList(listVersion: ListVersion, metaListUri: string): void {
   metaList.itemName = itemName
   metaList.itemNamePlural = itemNamePlural
   metaList.logoUri = logoUri
-  metaList.isListOfLists = !!isListOfLists
-  metaList.hasHarddata = !!hasHarddata
+  metaList.isListOfLists = isListOfLists
+  metaList.hasHarddata = hasHarddata
   metaList.harddataDescription = harddataDescription
 
   // process the columns

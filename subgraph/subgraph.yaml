@@ -1,4 +1,6 @@
 specVersion: 0.0.4
+features:
+  - ipfsOnEthereumContracts
 schema:
   file: ./schema.graphql
 dataSources:
@@ -6,11 +8,12 @@ dataSources:
     name: StakeCurate
     network: kovan
     source:
-      address: "0x87497c0af0075fd18a57c34cfea149f15ecadda7"
+      address: "0xC68168E330204974b44C2AE9bBC24b77Ce25FFdd"
       abi: StakeCurate
+      startBlock: 32087984
     mapping:
       kind: ethereum/events
-      apiVersion: 0.0.5
+      apiVersion: 0.0.6
       language: wasm/assemblyscript
       entities:
         - GeneralCounter
@@ -29,9 +32,9 @@ dataSources:
           file: ./abis/StakeCurate.json
       eventHandlers:
         - event: StakeCurateCreated()
-          handler: handleStakeCurateCreated()
+          handler: handleStakeCurateCreated
         - event: ChangedStakeCurateSettings(uint256,address)
-          handler: handleChangedStakeCurateSettings()
+          handler: handleChangedStakeCurateSettings
         - event: AccountCreated(address,uint32)
           handler: handleAccountCreated
         - event: AccountFunded(uint64,uint32)
