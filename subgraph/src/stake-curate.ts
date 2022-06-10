@@ -247,6 +247,8 @@ function processEdition(
     return
   }
 
+  let requiredCount = 0
+
   for (let i = 0; i < props.length; i++) {
     let propObj = jobj(props[i])
     if (!propObj) {
@@ -267,8 +269,20 @@ function processEdition(
       edition.isMalformatted = true
       break
     }
+    // check if prop is dupe.
+    let propId = `${label}@${edition.id}`
+    let prop = Prop.load(propId)
+    if (prop) {
+      log.warning("dupe prop. edition id: {}, prop index: {}", [
+        edition.id,
+        i.toString(),
+      ])
+      edition.isMalformatted = true
+      edition.save()
+      return
+    }
     // prop is fine. create entity
-    let prop = new Prop(`${label}@${edition.id}`)
+    prop = new Prop(propId)
     prop.edition = edition.id
     prop.label = label
     prop.value = value
@@ -278,11 +292,22 @@ function processEdition(
     if (!column) {
       edition.hasIntrusion = true
       prop.intrusive = true
-    } else if (column.required && prop.value === null) {
-      edition.missingRequired = true
-      prop.missing = true
+    } else if (column.required) {
+      if (prop.value === null) {
+        edition.missingRequired = true
+        prop.missing = true
+      } else {
+        requiredCount++
+      }
     }
     prop.save()
+  }
+
+  // need metaList to check how many required columns there were
+  let metaList = MetaList.load(list.currentVersion) as MetaList
+
+  if (requiredCount < metaList.requiredCount) {
+    edition.missingRequired = true
   }
 
   edition.save()
@@ -508,6 +533,7 @@ function processMetaList(listVersion: ListVersion, metaListUri: string): void {
 
   // process the columns
   let columns = jarr(obj.get("columns"))
+  let requiredCount = 0
 
   if (!columns) {
     log.warning("wrong columns object. metaList id: {}", [metaList.id])
@@ -537,19 +563,32 @@ function processMetaList(listVersion: ListVersion, metaListUri: string): void {
         metaList.isMalformatted = true
         break
       }
-      // column is fine. create entity
-      let column = new Column(`${label}@${metaList.id}`)
+      // check if it existed previously, just to keep track of it.
+      let columnId = `${label}@${metaList.id}`
+      let column = Column.load(columnId)
+      if (column) {
+        log.warning("dupe column. metaList id: {}, column index: {}", [
+          metaList.id,
+          i.toString(),
+        ])
+        metaList.isMalformatted = true
+        metaList.save()
+        return
+      }
+      // column is fine, create entity
+      column = new Column(`${label}@${metaList.id}`)
       column.metaList = metaList.id
       column.type = type
       column.label = label
       column.description = description
-      column.required = !!required
-      column.isIdentifier = !!isIdentifier
-
+      column.required = required
+      column.isIdentifier = isIdentifier
+      if (required) requiredCount++
       column.save()
     }
   }
 
+  metaList.requiredCount = requiredCount
   metaList.save()
 }
 

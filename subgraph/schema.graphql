@@ -241,6 +241,8 @@ type MetaList @entity(immutable: true) {
   policyUri: String
   "Columns of this MetaList"
   columns: [Column!]! @derivedFrom(field: "metaList")
+  "How many columns are required"
+  requiredCount: Int!
   "Recommended age for considering an item inclusion canonical for queries"
   defaultAgeForInclusion: BigInt
   "Displayed name for this list"
