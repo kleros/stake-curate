@@ -93,15 +93,15 @@ export function ipfsToJsonValueOrNull(uri: string): JSONValue | null {
   let jsonBytes = ipfs.cat(uri)
   // ipfsUri could be malformatted or file non-available.
   if (!jsonBytes) {
-    log.error("Failed to fetch JSON from uri {}", [uri])
+    log.warning("Failed to fetch JSON from uri {}", [uri])
     return null
   }
 
-  let jsonObjValue = json.fromBytes(jsonBytes)
-  if (!jsonObjValue) {
-    log.error("Error getting json object value, from uri {}", [uri])
+  let result = json.try_fromBytes(jsonBytes)
+  if (result.isError) {
+    log.warning("IPFS file is not a json, from uri {}", [uri])
     return null
   }
 
-  return jsonObjValue
+  return result.value
 }

@@ -160,8 +160,10 @@ export function handleDispute(event: DisputeEvent): void {
   dispute.metaEvidence = event.params._metaEvidenceID.toString()
   dispute.save()
 
+  let listVersion = ListVersion.load(dispute.listVersion) as ListVersion
+  let arbitrationSetting = ArbitrationSetting.load(listVersion.arbitrationSetting) as ArbitrationSetting
   // this entity is made to find the Dispute on Ruling
-  let checkpointId = `${event.params._disputeID.toString()}@${event.transaction.from.toHexString()}`
+  let checkpointId = `${event.params._disputeID.toString()}@${arbitrationSetting.arbitrator.toHexString()}`
   let disputeCheckpoint = DisputeCheckpoint.load(checkpointId)
   if (disputeCheckpoint !== null) {
     // it shouldn't exist.
@@ -195,7 +197,7 @@ export function handleEvidence(event: EvidenceEvent): void {
   let obj = jobj(ipfsToJsonValueOrNull(evidence.rawUri))
 
   if (!obj) {
-    log.error("Error acquiring json from ipfs. evidence id: {}", [
+    log.warning("Error acquiring json from ipfs. evidence id: {}", [
       evidence.id,
     ])
     evidence.isMalformatted = true
@@ -286,6 +288,8 @@ function processEdition(
     prop.edition = edition.id
     prop.label = label
     prop.value = value
+    prop.missing = false // optimistic
+    prop.intrusive = false // optimistic
 
     // check if it was uncalled for, or required and null. to do so, get the mapped column.
     let column = Column.load(`${label}@${list.currentVersion}`)
@@ -334,7 +338,6 @@ export function handleItemAdded(event: ItemAdded): void {
   item.list = list.id
 
   item.editionCount = BigInt.fromU32(0) // will be incremented when edition is processed
-  // item.currentEdition will be set when edition is processed
 
   item.disputeCount = BigInt.fromU32(0)
   item.currentDispute = null
@@ -348,7 +351,7 @@ export function handleItemAdded(event: ItemAdded): void {
   evidenceThread.save()
 
   item.thread = evidenceThread.id
-  item.save()
+  // item.save() will be done on the processEdition below
 
   let itemSlot = new ItemSlot(event.params._itemSlot.toString())
   itemSlot.item = item.id
@@ -369,7 +372,7 @@ export function handleItemEdited(event: ItemEdited): void {
   let list = List.load(item.list) as List
   let listVersion = ListVersion.load(list.currentVersion) as ListVersion
   item.committedStake = listVersion.requiredStake
-  item.save()
+  // item.save() will be done on the processEdition below
 
   processEdition(
     item,
@@ -438,7 +441,9 @@ export function handleItemChallenged(event: ItemChallenged): void {
   // create the dispute
   dispute.localId = disputeLocalId
   dispute.disputeSlot = event.params._disputeSlot
-  // dispute.arbitratorDisputeId is set at handleDispute
+  // dispute.arbitratorDisputeId is truly set at handleDispute. writing to stop crash
+  dispute.arbitratorDisputeId = BigInt.fromU32(0)
+
   dispute.status = "Ongoing"
   dispute.ruling = null
   dispute.item = item.id
@@ -463,7 +468,9 @@ export function handleItemChallenged(event: ItemChallenged): void {
 
   dispute.creationTimestamp = event.block.timestamp
   dispute.resolutionTimestamp = null
-  // dispute.metaEvidence is set on DisputeEvent
+  // dispute.metaEvidence is truly set on DisputeEvent. writing to stop crash
+  dispute.metaEvidence = "id"
+
   dispute.save()
   item.save()
 }
@@ -651,9 +658,9 @@ export function handleMetaEvidence(event: MetaEvidenceEvent): void {
 }
 
 export function handleRuling(event: Ruling): void {
-  let checkpoint = DisputeCheckpoint.load(
-    `${event.params._disputeID}@${event.params._arbitrator.toHexString()}`
-  ) as DisputeCheckpoint
+  let checkpointId = `${event.params._disputeID.toString()}@${event.params._arbitrator.toHexString()}`
+  let checkpoint = DisputeCheckpoint.load(checkpointId) as DisputeCheckpoint
+
   let dispute = Dispute.load(checkpoint.dispute) as Dispute
 
   dispute.status = "Resolved"
