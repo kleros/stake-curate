@@ -53,7 +53,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 removalPeriod; 
     uint56 arbitrationSettingId;
     uint32 versionTimestamp;
-    uint48 freespace;
+    uint32 upgradePeriod; // extends time to edit the item without getting adopted.
+    uint16 freespace;
   }
 
   struct Item {
@@ -98,9 +99,10 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
 
   event ListCreated(uint56 _governorId, uint32 _requiredStake, uint32 _removalPeriod,
-    uint64 _arbitrationSettingId, string _metalist);
+    uint32 _upgradePeriod, uint56 _arbitrationSettingId, string _metalist);
   event ListUpdated(uint56 _listId, uint56 _governorId, uint32 _requiredStake,
-    uint32 _removalPeriod, uint64 _arbitrationSettingId, string _metalist);
+    uint32 _removalPeriod, uint32 _upgradePeriod,
+    uint64 _arbitrationSettingId, string _metalist);
 
   event ItemAdded(uint56 _itemSlot, uint56 _listId, uint56 _accountId, string _ipfsUri,
     bytes _harddata
@@ -258,6 +260,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _governorId The id of the governor.
    * @param _requiredStake The Cint32 version of the required stake per item.
    * @param _removalPeriod The amount of seconds an item needs to go through removal period to be removed.
+   * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable. 
    * @param _arbitrationSettingId Id of the internally stored arbitrator setting
    * @param _metalist IPFS uri of metaEvidence
    */
@@ -265,6 +268,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint56 _governorId,
     uint32 _requiredStake,
     uint32 _removalPeriod,
+    uint32 _upgradePeriod,
     uint56 _arbitrationSettingId,
     string calldata _metalist
   ) external {
@@ -276,10 +280,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.governorId = _governorId;
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
+    list.upgradePeriod = _upgradePeriod;
     list.arbitrationSettingId = _arbitrationSettingId;
     list.versionTimestamp = uint32(block.timestamp);
     emit ListCreated(
-      _governorId, _requiredStake, _removalPeriod, _arbitrationSettingId, _metalist
+      _governorId, _requiredStake, _removalPeriod,
+      _upgradePeriod, _arbitrationSettingId, _metalist
     );
   }
 
@@ -289,6 +295,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _governorId Id of the new governor.
    * @param _requiredStake Cint32 version of the new required stake per item.
    * @param _removalPeriod Seconds until item is considered removed after starting removal.
+   * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
    * @param _arbitrationSettingId Id of the new arbitrator extra data.
    * @param _metalist IPFS uri of the metadata of this list.
    */
@@ -297,6 +304,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint56 _governorId,
     uint32 _requiredStake,
     uint32 _removalPeriod,
+    uint32 _upgradePeriod,
     uint56 _arbitrationSettingId,
     string calldata _metalist
   ) external {
@@ -307,10 +315,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.governorId = _governorId;
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
+    list.upgradePeriod = _upgradePeriod;
     list.arbitrationSettingId = _arbitrationSettingId;
     list.versionTimestamp = uint32(block.timestamp);
     emit ListUpdated(
-      _listId, _governorId, _requiredStake, _removalPeriod, _arbitrationSettingId, _metalist
+      _listId, _governorId, _requiredStake,
+      _removalPeriod, _upgradePeriod, _arbitrationSettingId, _metalist
     );
   }
 
@@ -651,12 +661,13 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // ----- PURE FUNCTIONS -----
 
-  function itemIsInAdoption(Item memory _item, List memory _list, Account memory _account) internal pure returns (bool) {
+  function itemIsInAdoption(Item memory _item, List memory _list, Account memory _account) internal view returns (bool) {
     // check if any of the 5 conditions for adoption is met:
     bool beingRemoved = _item.removing;
     bool accountWithdrawing = _account.withdrawingTimestamp != 0;
     bool committedUnderRequired = Cint32.decompress(_item.committedStake) < Cint32.decompress(_list.requiredStake);
-    bool noCommitAfterListUpdate = _item.editionTimestamp <= _list.versionTimestamp;
+    bool noCommitAfterListUpdate = _item.editionTimestamp <= _list.versionTimestamp
+      && block.timestamp >= _list.versionTimestamp + _list.upgradePeriod;
     uint256 freeStake = getFreeStake(_account);
     bool notEnoughFreeStake = freeStake < Cint32.decompress(_list.requiredStake);
     return (
