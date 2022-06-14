@@ -44,16 +44,16 @@ contract StakeCurate is IArbitrable, IEvidence {
   /* note on why ids can be 56 bits
     say gas needed is 32. overflow is not economical
     that's ~10**18 bytes of calldata. to publish on L1
-    at (say) 1 gas per byte, you need 31B blocks.
-    during this effort, (which is hardly reachable, 1k years at 1block/s)
-    every user can leave to a new contract.
+    lets say, 0.00001 cent per id increment. thats 0.7T$, for a grief.
+    and during this effort, every user can leave to a new contract.
   */
   struct List {
-    uint56 governorId;
-    uint32 requiredStake;
-    uint32 removalPeriod;
-    uint56 arbitrationSettingId; // arbitrationSetting cant mutate, so you reference it.
-    uint80 freespace;
+    uint56 governorId; // governor needs an account
+    uint32 requiredStake; 
+    uint32 removalPeriod; 
+    uint56 arbitrationSettingId;
+    uint32 versionTimestamp;
+    uint48 freespace;
   }
 
   struct Item {
@@ -64,7 +64,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     bool removing; // on failed dispute, will automatically reset removingTimestamp
     ItemSlotState slotState;
     uint32 submissionBlock; // only used to make evidenceGroupId.
-    uint32 freespace; // you could hold bounties here?
+    uint32 editionTimestamp; // you could hold bounties here?
     bytes harddata;
   }
 
@@ -277,6 +277,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
     list.arbitrationSettingId = _arbitrationSettingId;
+    list.versionTimestamp = uint32(block.timestamp);
     emit ListCreated(
       _governorId, _requiredStake, _removalPeriod, _arbitrationSettingId, _metalist
     );
@@ -307,6 +308,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
     list.arbitrationSettingId = _arbitrationSettingId;
+    list.versionTimestamp = uint32(block.timestamp);
     emit ListUpdated(
       _listId, _governorId, _requiredStake, _removalPeriod, _arbitrationSettingId, _metalist
     );
@@ -350,6 +352,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // remember to change this to get the arb block number instead.
     // https://developer.offchainlabs.com/docs/time_in_arbitrum
     item.submissionBlock = uint32(block.number);
+    item.editionTimestamp = uint32(block.timestamp);
     item.harddata = _harddata;
 
     emit ItemAdded(itemSlot, _listId, _accountId, _ipfsUri, _harddata);
@@ -371,6 +374,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     
     item.committedStake = list.requiredStake;
     item.harddata = _harddata;
+    item.editionTimestamp = uint32(block.timestamp);
 
     emit ItemEdited(_itemSlot, _ipfsUri, _harddata);
   }
@@ -429,6 +433,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.committedStake = list.requiredStake;
     item.removing = false;
     item.removingTimestamp = 0;
+    // item.editionTimestamp is purposedly not set here!
+    // if needed, adopter is adviced to batch the edit after adoption
 
     emit ItemAdopted(_itemSlot, _adopterId);
   }
@@ -451,6 +457,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough to recommit item");
 
     item.committedStake = list.requiredStake;
+    item.editionTimestamp = uint32(block.timestamp);
 
     emit ItemRecommitted(_itemSlot);
   }
@@ -487,7 +494,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(_minAmount <= freeStake, "Not enough free stake to satisfy minAmount");
 
     // All requirements met, begin
-    uint256 comittedAmount = Cint32.decompress(list.requiredStake) <= freeStake
+    uint256 committedAmount = Cint32.decompress(list.requiredStake) <= freeStake
       ? Cint32.decompress(list.requiredStake)
       : freeStake
     ;
@@ -505,9 +512,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     // todo revisit the removing logic. instead of setting the removing timestamp to 0,
     // just reset the timestamp to current block when challenge fails.
     item.removingTimestamp = 0;
-    item.committedStake = Cint32.compress(comittedAmount);
+    item.committedStake = Cint32.compress(committedAmount);
     unchecked {
-      account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) + comittedAmount);
+      account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) + committedAmount);
     }
     disputes[disputeSlot] = DisputeSlot({
       arbitratorDisputeId: arbitratorDisputeId,
@@ -628,7 +635,12 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     // the item must have same or more committed amount than required for list
     bool enoughCommitted = Cint32.decompress(_item.committedStake) >= Cint32.decompress(_list.requiredStake);
-    return (!free && _item.slotState == ItemSlotState.Used && enoughCommitted);
+    return (
+      !free
+      && (_item.editionTimestamp > _list.versionTimestamp)
+      && _item.slotState == ItemSlotState.Used
+      && enoughCommitted
+    );
   }
 
   function getEvidenceGroupId(uint56 _itemSlot) public view returns (uint256) {
@@ -640,13 +652,20 @@ contract StakeCurate is IArbitrable, IEvidence {
   // ----- PURE FUNCTIONS -----
 
   function itemIsInAdoption(Item memory _item, List memory _list, Account memory _account) internal pure returns (bool) {
-    // check if any of the 4 conditions for adoption is met:
+    // check if any of the 5 conditions for adoption is met:
     bool beingRemoved = _item.removing;
     bool accountWithdrawing = _account.withdrawingTimestamp != 0;
     bool committedUnderRequired = Cint32.decompress(_item.committedStake) < Cint32.decompress(_list.requiredStake);
+    bool noCommitAfterListUpdate = _item.editionTimestamp <= _list.versionTimestamp;
     uint256 freeStake = getFreeStake(_account);
     bool notEnoughFreeStake = freeStake < Cint32.decompress(_list.requiredStake);
-    return (beingRemoved || accountWithdrawing || committedUnderRequired || notEnoughFreeStake);
+    return (
+      beingRemoved
+      || accountWithdrawing
+      || committedUnderRequired
+      || noCommitAfterListUpdate
+      || notEnoughFreeStake
+    );
   }
 
   function getFreeStake(Account memory _account) internal pure returns (uint256) {

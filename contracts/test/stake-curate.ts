@@ -483,6 +483,15 @@ describe("Stake Curate", async () => {
         .to.emit(stakeCurate, "ItemAdopted")
         .withArgs(itemSlot, adopterId)
     })
+
+    it("Can adopt item unincluded due to list version", async () => {
+      await stakeCurate.connect(deployer).addItem(...addItemArgs)
+      await ethers.provider.send("evm_increaseTime", [3_600 + 1])
+      await stakeCurate.connect(governor).updateList(listId, governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD, arbitratorSettingId, IPFS_URI)
+      await expect(stakeCurate.connect(adopter).adoptItem(itemSlot, adopterId))
+        .to.emit(stakeCurate, "ItemAdopted")
+        .withArgs(itemSlot, adopterId)
+    })
   })
 
   describe("challenges...", () => {
@@ -638,6 +647,14 @@ describe("Stake Curate", async () => {
       await expect(stakeCurate.connect(deployer).addItem(...addItemArgs))
         .to.emit(stakeCurate, "ItemAdded")
         .withArgs(...addItemArgs)
+    })
+
+    it("Cannot challenge an item unincluded due to version", async () => {
+      await ethers.provider.send("evm_increaseTime", [3_600 + 1])
+      await stakeCurate.connect(governor).updateList(listId, governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD, arbitratorSettingId, IPFS_URI)
+      await expect(stakeCurate.connect(challenger)
+        .challengeItem(...challengeItemArgs))
+        .to.be.revertedWith("Item cannot be challenged")
     })
   })
 })
