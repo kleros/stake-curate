@@ -54,7 +54,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint56 arbitrationSettingId;
     uint32 versionTimestamp;
     uint32 upgradePeriod; // extends time to edit the item without getting adopted.
-    uint16 freespace;
+    bool freeAdoptions; // all items are in adoption all the time
+    uint8 freespace;
   }
 
   struct Item {
@@ -99,9 +100,9 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
 
   event ListCreated(uint56 _governorId, uint32 _requiredStake, uint32 _removalPeriod,
-    uint32 _upgradePeriod, uint56 _arbitrationSettingId, string _metalist);
+    uint32 _upgradePeriod, bool _freeAdoptions, uint56 _arbitrationSettingId, string _metalist);
   event ListUpdated(uint56 _listId, uint56 _governorId, uint32 _requiredStake,
-    uint32 _removalPeriod, uint32 _upgradePeriod,
+    uint32 _removalPeriod, uint32 _upgradePeriod, bool _freeAdoptions,
     uint64 _arbitrationSettingId, string _metalist);
 
   event ItemAdded(uint56 _itemSlot, uint56 _listId, uint56 _accountId, string _ipfsUri,
@@ -260,7 +261,8 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _governorId The id of the governor.
    * @param _requiredStake The Cint32 version of the required stake per item.
    * @param _removalPeriod The amount of seconds an item needs to go through removal period to be removed.
-   * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable. 
+   * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
+   * @param _freeAdoptions Whether if the items in this list are in adoption all the time.
    * @param _arbitrationSettingId Id of the internally stored arbitrator setting
    * @param _metalist IPFS uri of metaEvidence
    */
@@ -269,6 +271,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _requiredStake,
     uint32 _removalPeriod,
     uint32 _upgradePeriod,
+    bool _freeAdoptions,
     uint56 _arbitrationSettingId,
     string calldata _metalist
   ) external {
@@ -281,11 +284,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
     list.upgradePeriod = _upgradePeriod;
+    list.freeAdoptions = _freeAdoptions;
     list.arbitrationSettingId = _arbitrationSettingId;
     list.versionTimestamp = uint32(block.timestamp);
     emit ListCreated(
       _governorId, _requiredStake, _removalPeriod,
-      _upgradePeriod, _arbitrationSettingId, _metalist
+      _upgradePeriod, _freeAdoptions, _arbitrationSettingId, _metalist
     );
   }
 
@@ -296,6 +300,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _requiredStake Cint32 version of the new required stake per item.
    * @param _removalPeriod Seconds until item is considered removed after starting removal.
    * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
+   * @param _freeAdoptions Whether if the items in this list are in adoption all the time.
    * @param _arbitrationSettingId Id of the new arbitrator extra data.
    * @param _metalist IPFS uri of the metadata of this list.
    */
@@ -305,6 +310,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _requiredStake,
     uint32 _removalPeriod,
     uint32 _upgradePeriod,
+    bool _freeAdoptions,
     uint56 _arbitrationSettingId,
     string calldata _metalist
   ) external {
@@ -316,11 +322,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.requiredStake = _requiredStake;
     list.removalPeriod = _removalPeriod;
     list.upgradePeriod = _upgradePeriod;
+    list.freeAdoptions = _freeAdoptions;
     list.arbitrationSettingId = _arbitrationSettingId;
     list.versionTimestamp = uint32(block.timestamp);
     emit ListUpdated(
       _listId, _governorId, _requiredStake,
-      _removalPeriod, _upgradePeriod, _arbitrationSettingId, _metalist
+      _removalPeriod, _upgradePeriod, _freeAdoptions, _arbitrationSettingId, _metalist
     );
   }
 
@@ -676,6 +683,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       || committedUnderRequired
       || noCommitAfterListUpdate
       || notEnoughFreeStake
+      || _list.freeAdoptions
     );
   }
 
