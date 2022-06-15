@@ -103,7 +103,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _upgradePeriod, bool _freeAdoptions, uint56 _arbitrationSettingId, string _metalist);
   event ListUpdated(uint56 _listId, uint56 _governorId, uint32 _requiredStake,
     uint32 _removalPeriod, uint32 _upgradePeriod, bool _freeAdoptions,
-    uint64 _arbitrationSettingId, string _metalist);
+    uint56 _arbitrationSettingId, string _metalist);
 
   event ItemAdded(uint56 _itemSlot, uint56 _listId, uint56 _accountId, string _ipfsUri,
     bytes _harddata

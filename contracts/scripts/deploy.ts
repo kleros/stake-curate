@@ -20,7 +20,6 @@ async function main() {
   // manually to make sure everything is compiled
   await run("compile")
 
-  const withdrawalPeriod = 300
   // We get the contract to deploy
   const wallet = new ethers.Wallet(process.env.PRIVATE_KEY)
   const StakeCurate = await ethers.getContractFactory("StakeCurate")
