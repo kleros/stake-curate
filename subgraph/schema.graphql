@@ -1,265 +1,477 @@
 enum ItemStatus {
-  "The item could be included, but may have been removed or not held by enough stake."
+  """
+  The item could be included, but may have been removed or not held by enough stake.
+  """
   Included
-  "The item is currently ongoing a dispute."
+  """
+  The item is currently ongoing a dispute.
+  """
   Disputed
-  "The item has been excluded after a successful challenge."
+  """
+  The item has been excluded after a successful challenge.
+  """
   Excluded
 }
 
 enum DisputeStatus {
-  "The dispute is still ongoing."
+  """
+  The dispute is still ongoing.
+  """
   Ongoing
-  "The dispute has been resolved."
+  """
+  The dispute has been resolved.
+  """
   Resolved
 }
 
 enum Ruling {
-  "The submitter side won the dispute and item stays"
+  """
+  The submitter side won the dispute and item stays
+  """
   Keep
-  "The challenger side won the dispute and item is removed"
+  """
+  The challenger side won the dispute and item is removed
+  """
   Remove
 }
 
 type GeneralCounter @entity {
-  "The id is always the string '0'"
+  """
+  The id is always the string '0'
+  """
   id: ID!
-  "Counts how many lists exist"
+  """
+  Counts how many lists exist
+  """
   listCount: BigInt!
-  "Counts how many accounts exist"
+  """
+  Counts how many accounts exist
+  """
   accountCount: BigInt!
-  "Counts how many arbitration settings exist"
+  """
+  Counts how many arbitration settings exist
+  """
   arbitrationSettingCount: BigInt!
-  "How much time must elapse from request to withdraw a stake"
+  """
+  How much time must elapse from request to withdraw a stake
+  """
   withdrawalPeriod: BigInt!
-  "Address able to change some parameters in the contract"
+  """
+  Address able to change some parameters in the contract
+  """
   governor: Bytes!
 }
 
 # Mainly to prevent subgraph from using contract.bind
 # For advanced users, it could be useful in the frontend 
 type ItemSlot @entity {
-  "<slotId>"
+  """
+  <slotId>
+  """
   id: ID!
-  "The item this slot contains"
+  """
+  The item this slot contains
+  """
   item: Item! # entity is created iff filled. so, non-nullable.
 }
 
 type Account @entity {
-  "<accountId>"
+  """
+  <accountId>
+  """
   id: ID!
-  "Identifies the account in the contract"
+  """
+  Identifies the account in the contract
+  """
   accountId: BigInt!
-  "The address owning the account"
+  """
+  The address owning the account
+  """
   owner: Bytes!
-  "Total stake owned by this account (uncompressed)"
+  """
+  Total stake owned by this account (uncompressed)
+  """
   fullStake: BigInt!
-  "Stake available, supports all items equal or under (uncompressed)"
+  """
+  Stake available, supports all items equal or under (uncompressed)
+  """
   freeStake: BigInt!
-  "Stake locked due to ongoing disputes (uncompressed)"
+  """
+  Stake locked due to ongoing disputes (uncompressed)
+  """
   lockedStake: BigInt!
-  "Currently in withdrawal process"
+  """
+  Currently in withdrawal process
+  """
   withdrawing: Boolean!
-  "Timestamp in which withdrawing process has started"
+  """
+  Timestamp in which withdrawing process has started
+  """
   withdrawingTimestamp: BigInt!
-  "Items owned by this account"
+  """
+  Items owned by this account
+  """
   items: [Item!]! @derivedFrom(field: "account")
-  "Editions authored by this account"
+  """
+  Editions authored by this account
+  """
   editions: [Edition!]! @derivedFrom(field: "author")
 }
 
 type List @entity {
-  "<listId>"
+  """
+  <listId>
+  """
   id: ID!
-  "Identifies the list in the contract"
+  """
+  Identifies the list in the contract
+  """
   listId: BigInt!
-  "Items contained in this list"
+  """
+  Items contained in this list
+  """
   items: [Item!]! @derivedFrom(field: "list")
-  "How many items have ever been submitted to this list"
+  """
+  How many items have ever been submitted to this list
+  """
   itemCount: BigInt!
-  "How many versions this list has had"
+  """
+  How many versions this list has had
+  """
   versionCount: BigInt!
-  "The different versions from this list"
+  """
+  The different versions from this list
+  """
   versions: [ListVersion!]! @derivedFrom(field: "list")
-  "Current version of this list"
+  """
+  Current version of this list
+  """
   currentVersion: ListVersion!
 }
 
 type ListVersion @entity(immutable: true) {
-  "<listVersionId>@<listId>"
+  """
+  <listVersionId>@<listId>
+  """
   id: ID!
-  "The list this version belongs to"
+  """
+  The list this version belongs to
+  """
   list: List!
-  "The incremental id given to this version"
+  """
+  The incremental id given to this version
+  """
   versionId: BigInt!
-  "Account pointing to the governor"
+  """
+  Account pointing to the governor
+  """
   governor: Account!
-  "Required stake for item inclusion in this list (uncompressed)"
+  """
+  Required stake for item inclusion in this list (uncompressed)
+  """
   requiredStake: BigInt!
-  "Removal period for items in this list, in seconds"
+  """
+  Removal period for items in this list, in seconds
+  """
   removalPeriod: BigInt!
-  "Arbitration setting for this list"
+  """
+  Arbitration setting for this list
+  """
   arbitrationSetting: ArbitrationSetting!
-  "MetaEvidence for this version"
+  """
+  MetaEvidence for this version
+  """
   metaList: MetaList!
 }
 
 type ArbitrationSetting @entity(immutable: true) {
-  "<arbitrationSettingId>"
+  """
+  <arbitrationSettingId>
+  """
   id: ID!
-  "Identifies the arbitrationSetting in the contract"
+  """
+  Identifies the arbitrationSetting in the contract
+  """
   arbitrationSettingId: BigInt!
-  "Address of the arbitrator"
+  """
+  Address of the arbitrator
+  """
   arbitrator: Bytes!
-  "Bytes that form the arbitratorExtraData"
+  """
+  Bytes that form the arbitratorExtraData
+  """
   arbitratorExtraData: Bytes!
 }
 
 type Item @entity {
-  "<localId>@<listId>"
+  """
+  <localId>@<listId>
+  """
   id: ID!
-  "The incremental id this item holds within its list"
+  """
+  The incremental id this item holds within its list
+  """
   localId: BigInt!
-  "Item slot in which the item resides"
+  """
+  Item slot in which the item resides
+  """
   itemSlot: BigInt!
-  "Blocknumber in which the item was submitted"
+  """
+  Blocknumber in which the item was submitted
+  """
   submissionBlock: BigInt!
-  "Status of the item"
+  """
+  Status of the item
+  """
   status: ItemStatus!
   # You need to store "committedStake", because of recommitItem,
   # as it doesn't produce an edition. Otherwise you could fetch it from
   # the current list version.
-  "Stake amount committed to preserving the item (uncompressed)"
+  """
+  Stake amount committed to preserving the item (uncompressed)
+  """
   committedStake: BigInt!
-  "Whether if the item is currently being removed. It might have been removed already"
+  """
+  Whether if the item is currently being removed. It might have been removed already
+  """
   removing: Boolean!
-  "Timestamp at which the removal is initiated"
+  """
+  Timestamp at which the removal is initiated
+  """
   removalTimestamp: BigInt!
-  "The account that owns the item"
+  """
+  The account that owns the item
+  """
   account: Account!
-  "The List in which the item was submitted"
+  """
+  The List in which the item was submitted
+  """
   list: List!
-  "How many editions does this item have"
+  """
+  How many editions does this item have
+  """
   editionCount: BigInt!
-  "All the editions from this item"
+  """
+  All the editions from this item
+  """
   editions: [Edition!]! @derivedFrom(field: "item")
-  "Current edition of this item. Might be unneeded"
+  """
+  Current edition of this item. Might be unneeded
+  """
   currentEdition: Edition!
-  "How many disputes there have been for this item"
+  """
+  How many disputes there have been for this item
+  """
   disputeCount: BigInt!
-  "All the disputes concerning this item"
+  """
+  All the disputes concerning this item
+  """
   disputes: [Dispute!]! @derivedFrom(field: "item")
-  "Current dispute on this item. Might be uneeded, can be null"
+  """
+  Current dispute on this item. Might be uneeded, can be null
+  """
   currentDispute: Dispute
-  "Thread containing the evidence related to this item"
+  """
+  Thread containing the evidence related to this item
+  """
   thread: EvidenceThread!
 }
 
 type Edition @entity(immutable: true) {
-  "<localId>@<itemId>"
+  """
+  <localId>@<itemId>
+  """
   id: ID!
-  "The incremental id this edition holds within its item"
+  """
+  The incremental id this edition holds within its item
+  """
   localId: BigInt!
-  "Item the edition belongs to"
+  """
+  Item the edition belongs to
+  """
   item: Item!
-  "Account authoring this edition"
+  """
+  Account authoring this edition
+  """
   author: Account!
-  "Ipfs uri containing the off-chain data for the edition"
+  """
+  Ipfs uri containing the off-chain data for the edition
+  """
   ipfsUri: String!
-  "Props contained in this edition"
+  """
+  Props contained in this edition
+  """
   props: [Prop!]! @derivedFrom(field: "edition")
-  "On-chain arbitrary data"
+  """
+  On-chain arbitrary data
+  """
   harddata: Bytes
-  "Whether if this edition is malformatted"
+  """
+  Whether if this edition is malformatted
+  """
   isMalformatted: Boolean!
-  "Whether if this edition is missing a required prop"
+  """
+  Whether if this edition is missing a required prop
+  """
   missingRequired: Boolean!
-  "Whether if this edition contains an unsolicited prop"
+  """
+  Whether if this edition contains an unsolicited prop
+  """
   hasIntrusion: Boolean!
-  "When this edition was created"
+  """
+  When this edition was created
+  """
   timestamp: BigInt!
-  "Block at which this edition was created (used to call out frontrunning)"
+  """
+  Block at which this edition was created (used to call out frontrunning)
+  """
   blockNumber: BigInt!
-  "List version when this edition was created (historical)"
+  """
+  List version when this edition was created (historical)
+  """
   listVersion: ListVersion!
 }
 
 type Dispute @entity {
-  "<localId>@<itemId>"
+  """
+  <localId>@<itemId>
+  """
   id: ID!
-  "How many disputes had been made for this item at dispute creation"
+  """
+  How many disputes had been made for this item at dispute creation
+  """
   localId: BigInt!
-  "Slot in which the dispute lives"
+  """
+  Slot in which the dispute lives
+  """
   disputeSlot: BigInt!
-  "Identifier the arbitrator uses for disputes"
+  """
+  Identifier the arbitrator uses for disputes
+  """
   arbitratorDisputeId: BigInt!
-  "Status of the dispute"
+  """
+  Status of the dispute
+  """
   status: DisputeStatus!
-  "Ruling of the dispute. Null when pending"
+  """
+  Ruling of the dispute. Null when pending
+  """
   ruling: Ruling
-  "Item whose inclusion is being disputed"
+  """
+  Item whose inclusion is being disputed
+  """
   item: Item!
   # This is an address because the challenger account is not emitted.
   # It doesn't matter since StakeCurate only acts on the address of the account.
-  "Address of the challenger, who will be rewarded if winning"
+  """
+  Address of the challenger, who will be rewarded if winning
+  """
   challenger: Bytes!
-  "List version at dispute creation"
+  """
+  List version at dispute creation
+  """
   listVersion: ListVersion!
-  "Amount rewarded to challenger upon successful challenge (uncompressed)"
+  """
+  Amount rewarded to challenger upon successful challenge (uncompressed)
+  """
   stake: BigInt!
-  "Moment in which this dispute was created"
+  """
+  Moment in which this dispute was created
+  """
   creationTimestamp: BigInt!
-  "Moment in which this dispute was resolved"
+  """
+  Moment in which this dispute was resolved
+  """
   resolutionTimestamp: BigInt
-  "MetaEvidence linked to this Dispute"
+  """
+  MetaEvidence linked to this Dispute
+  """
   metaEvidence: MetaEvidence!
 }
 
 # Get the Dispute belonging to a certain disputeId and arbitrator pair
 type DisputeCheckpoint @entity(immutable: true) {
-  "<disputeId>@<arbitrator>"
+  """
+  <disputeId>@<arbitrator>
+  """
   id: ID!
-  "Dispute referenced by this checkpoint"
+  """
+  Dispute referenced by this checkpoint
+  """
   dispute: Dispute!
 }
 
 type MetaList @entity(immutable: true) {
-  "<versionId>@<listId>"
+  """
+  <versionId>@<listId>
+  """
   id: ID!
-  "The version this MetaList belongs to"
+  """
+  The version this MetaList belongs to
+  """
   version: ListVersion!
-  "The incremental id given to this MetaList"
+  """
+  The incremental id given to this MetaList
+  """
   versionId: BigInt!
-  "The raw MetaList IPFS URI"
+  """
+  The raw MetaList IPFS URI
+  """
   ipfsUri: String!
-  "Whether if the MetaList is malformatted, or file wasn't fetched"
+  """
+  Whether if the MetaList is malformatted, or file wasn't fetched
+  """
   isMalformatted: Boolean!
   
   ### From this point on, these fields may be missing or malformatted.
 
-  "Uri pointing to the policy document"
+  """
+  Uri pointing to the policy document
+  """
   policyUri: String
-  "Columns of this MetaList"
+  """
+  Columns of this MetaList
+  """
   columns: [Column!]! @derivedFrom(field: "metaList")
-  "How many columns are required"
+  """
+  How many columns are required
+  """
   requiredCount: Int!
-  "Recommended age for considering an item inclusion canonical for queries"
+  """
+  Recommended age for considering an item inclusion canonical for queries
+  """
   defaultAgeForInclusion: BigInt
-  "Displayed name for this list"
+  """
+  Displayed name for this list
+  """
   listTitle: String
-  "Displayed description for this list"
+  """
+  Displayed description for this list
+  """
   listDescription: String
-  "Name that will be used to display one item"
+  """
+  Name that will be used to display one item
+  """
   itemName: String
-  "Name that will be used to display many items"
+  """
+  Name that will be used to display many items
+  """
   itemNamePlural: String
-  "Displayed picture for this list"
+  """
+  Displayed picture for this list
+  """
   logoUri: String
-  "Whether if this list contains other lists"
+  """
+  Whether if this list contains other lists
+  """
   isListOfLists: Boolean
-  "Whether if this list supports harddata"
+  """
+  Whether if this list supports harddata
+  """
   hasHarddata: Boolean
-  "Short description of what the harddata contains"
+  """
+  Short description of what the harddata contains
+  """
   harddataDescription: String
 
   # maybe there should be a field to decode the harddata.
@@ -268,64 +480,114 @@ type MetaList @entity(immutable: true) {
 }
 
 type Column @entity(immutable: true) {
-  "<label>@<metaListId>"
+  """
+  <label>@<metaListId>
+  """
   id: ID!
-  "MetaList that holds this column"
+  """
+  MetaList that holds this column
+  """
   metaList: MetaList!
-  "Type of this column"
+  """
+  Type of this column
+  """
   type: String!
-  "Label of this column"
+  """
+  Label of this column
+  """
   label: String!
-  "Description of this column"
+  """
+  Description of this column
+  """
   description: String!
-  "Whether if giving a prop for this column is mandatory"
+  """
+  Whether if giving a prop for this column is mandatory
+  """
   required: Boolean!
-  "Unknown usage"
+  """
+  Unknown usage
+  """
   isIdentifier: Boolean!
 }
 
 type Prop @entity(immutable: true) {
-  "<label>@<editionId>"
+  """
+  <label>@<editionId>
+  """
   id: ID!
-  "Edition that holds this props"
+  """
+  Edition that holds this props
+  """
   edition: Edition!
-  "Label of this prop"
+  """
+  Label of this prop
+  """
   label: String!
-  "Value of this prop"
+  """
+  Value of this prop
+  """
   value: String
-  "Was required, but its value is null"
+  """
+  Was required, but its value is null
+  """
   missing: Boolean!
-  "There is no column for its linked metalist"
+  """
+  There is no column for its linked metalist
+  """
   intrusive: Boolean!
 }
 
 type EvidenceThread @entity {
-  "<evidenceGroupId>"
+  """
+  <evidenceGroupId>
+  """
   id: ID!
-  "Evidence group id generated from itemSlot and blockNumber"
+  """
+  Evidence group id generated from itemSlot and blockNumber
+  """
   evidenceGroupId: BigInt!
-  "Item this evidence thread points to"
+  """
+  Item this evidence thread points to
+  """
   item: Item!
-  "Counts how many evidence has been posted on this thread"
+  """
+  Counts how many evidence has been posted on this thread
+  """
   evidenceCount: BigInt!
-  "List of evidences posted on this thread"
+  """
+  List of evidences posted on this thread
+  """
   evidences: [Evidence!]! @derivedFrom(field: "thread")
 }
 
 type Evidence @entity(immutable: true) {
-  "<localId>@<evidenceGroupId>"
+  """
+  <localId>@<evidenceGroupId>
+  """
   id: ID!
-  "Incremental id for its thread"
+  """
+  Incremental id for its thread
+  """
   localId: BigInt!
-  "Thread this evidence points to"
+  """
+  Thread this evidence points to
+  """
   thread: EvidenceThread!
-  "Raw ipfs uri of the json of this evidence"
+  """
+  Raw ipfs uri of the json of this evidence
+  """
   rawUri: String!
-  "The address that has submitted the Evidence"
+  """
+  The address that has submitted the Evidence
+  """
   party: Bytes!
-  "Adress of the arbitrator the evidence is submitted to"
+  """
+  Adress of the arbitrator the evidence is submitted to
+  """
   arbitrator: Bytes!
-  "Whether if the evidence is malformatted"
+  """
+  Whether if the evidence is malformatted
+  """
   isMalformatted: Boolean!
 
   # You cannot point to the historical edition or listVersion
@@ -335,19 +597,31 @@ type Evidence @entity(immutable: true) {
   # From this point on, these are parsed from its json
   # Frontends should have workarounds when they are null
 
-  "Title of the evidence"
+  """
+  Title of the evidence
+  """
   name: String
-  "Description of the evidence"
+  """
+  Description of the evidence
+  """
   description: String
-  "URI of an optional file"
+  """
+  URI of an optional file
+  """
   fileUri: String
-  "Extension of this file"
+  """
+  Extension of this file
+  """
   fileTypeExtension: String
 }
 
 type MetaEvidence @entity(immutable: true) {
-  "<metaEvidenceId>"
+  """
+  <metaEvidenceId>
+  """
   id: ID!
-  "Link to ipfs"
+  """
+  Link to ipfs
+  """
   uri: String!
 }
