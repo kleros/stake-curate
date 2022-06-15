@@ -61,12 +61,12 @@ contract StakeCurate is IArbitrable, IEvidence {
   struct Item {
     uint56 accountId;
     uint56 listId;
-    uint32 committedStake; // used for protection against governor changing stake amounts
     uint32 removingTimestamp; // frontrunning protection
     bool removing; // on failed dispute, will automatically reset removingTimestamp
     ItemSlotState slotState;
     uint32 submissionBlock; // only used to make evidenceGroupId.
-    uint32 editionTimestamp; // you could hold bounties here?
+    uint32 commitTimestamp;
+    uint32 freeSpace;
     bytes harddata;
   }
 
@@ -77,7 +77,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint56 itemSlot;
     uint56 arbitrationSetting;
     DisputeState state;
-    uint80 freespace;
+    uint32 stake; // unlocks to submitter if Keep, sent to challenger if Remove
+    uint56 freespace;
     // ----
   }
 
@@ -352,13 +353,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[itemSlot];
     List storage list = lists[_listId];
     require(item.submissionBlock != block.number, "Wait until next block");
-    uint32 compressedRequiredStake = list.requiredStake;
     uint256 freeStake = getFreeStake(account);
-    uint256 requiredStake = Cint32.decompress(compressedRequiredStake);
-    require(freeStake >= requiredStake, "Not enough free stake");
+    require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough free stake");
     // Item can be submitted
     item.slotState = ItemSlotState.Used;
-    item.committedStake = compressedRequiredStake;
     item.accountId = _accountId;
     item.listId = _listId;
     item.removingTimestamp = 0;
@@ -369,7 +367,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // remember to change this to get the arb block number instead.
     // https://developer.offchainlabs.com/docs/time_in_arbitrum
     item.submissionBlock = uint32(block.number);
-    item.editionTimestamp = uint32(block.timestamp);
+    item.commitTimestamp = uint32(block.timestamp);
     item.harddata = _harddata;
 
     emit ItemAdded(itemSlot, _listId, _accountId, _ipfsUri, _harddata);
@@ -388,10 +386,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint256 freeStake = getFreeStake(account);
     List memory list = lists[item.listId];
     require(freeStake >= Cint32.decompress(list.requiredStake), "Cannot afford to edit this item");
-    
-    item.committedStake = list.requiredStake;
+
     item.harddata = _harddata;
-    item.editionTimestamp = uint32(block.timestamp);
+    item.commitTimestamp = uint32(block.timestamp);
 
     emit ItemEdited(_itemSlot, _ipfsUri, _harddata);
   }
@@ -431,6 +428,9 @@ contract StakeCurate is IArbitrable, IEvidence {
   /**
    * @dev Adopts an item that's in adoption. This means, the ownership of the item is transferred
    * from previous account to this new account. This serves as protection for certain attacks.
+   * It also allows reviving invalid items, while preserving the history.
+   * For lists with freeAdoptions, adopters can altruistically fix wrong items
+   * instead of challenging and removing them.
    * @param _itemSlot Slot of the item to adopt.
    * @param _adopterId Id of an account belonging to adopter, that will be new owner.
    */
@@ -447,19 +447,16 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(Cint32.decompress(list.requiredStake) <= freeStake, "Cannot afford adopting this item");
 
     item.accountId = _adopterId;
-    item.committedStake = list.requiredStake;
     item.removing = false;
     item.removingTimestamp = 0;
-    // item.editionTimestamp is purposedly not set here!
-    // if needed, adopter is adviced to batch the edit after adoption
+    item.commitTimestamp = uint32(block.timestamp);
 
     emit ItemAdopted(_itemSlot, _adopterId);
   }
 
   /**
-   * @dev Update committed amount of an item. Amounts are committed as a form of protection
-   * for item submitters, to support updating list required amounts without potentially draining
-   * users of their amounts.
+   * @dev Updates commit timestamp of an item. This is used as protection for 
+   * item submitters. Items have to opt in to the new list version.
    * @param _itemSlot Slot of the item to recommit.
    */
   function recommitItem(uint56 _itemSlot) external {
@@ -473,8 +470,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint256 freeStake = getFreeStake((account));
     require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough to recommit item");
 
-    item.committedStake = list.requiredStake;
-    item.editionTimestamp = uint32(block.timestamp);
+    item.commitTimestamp = uint32(block.timestamp);
 
     emit ItemRecommitted(_itemSlot);
   }
@@ -529,7 +525,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     // todo revisit the removing logic. instead of setting the removing timestamp to 0,
     // just reset the timestamp to current block when challenge fails.
     item.removingTimestamp = 0;
-    item.committedStake = Cint32.compress(committedAmount);
     unchecked {
       account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) + committedAmount);
     }
@@ -539,6 +534,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       challengerId: _challengerId,
       arbitrationSetting: list.arbitrationSettingId,
       state: DisputeState.Used,
+      stake: Cint32.compress(committedAmount),
       freespace: 0
     });
 
@@ -599,7 +595,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       // free the locked stake
       uint256 lockedAmount = Cint32.decompress(account.lockedStake);
       unchecked {
-        uint256 updatedLockedAmount = lockedAmount - Cint32.decompress(item.committedStake);
+        uint256 updatedLockedAmount = lockedAmount - Cint32.decompress(dispute.stake);
         account.lockedStake = Cint32.compress(updatedLockedAmount);
       }
     } else {
@@ -607,7 +603,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       // 4b. slot is now Free
       item.slotState = ItemSlotState.Free;
       // now, award the commited stake to challenger
-      uint256 amount = Cint32.decompress(item.committedStake);
+      uint256 amount = Cint32.decompress(dispute.stake);
       // remove amount from the account
       account.fullStake = Cint32.compress(Cint32.decompress(account.fullStake) - amount);
       account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) - amount);
@@ -650,13 +646,10 @@ contract StakeCurate is IArbitrable, IEvidence {
   function itemCanBeChallenged(Item memory _item, List memory _list) internal view returns (bool) {
     bool free = itemIsFree(_item, _list);
 
-    // the item must have same or more committed amount than required for list
-    bool enoughCommitted = Cint32.decompress(_item.committedStake) >= Cint32.decompress(_list.requiredStake);
     return (
       !free
-      && (_item.editionTimestamp > _list.versionTimestamp)
+      && (_item.commitTimestamp > _list.versionTimestamp)
       && _item.slotState == ItemSlotState.Used
-      && enoughCommitted
     );
   }
 
@@ -672,15 +665,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     // check if any of the 5 conditions for adoption is met:
     bool beingRemoved = _item.removing;
     bool accountWithdrawing = _account.withdrawingTimestamp != 0;
-    bool committedUnderRequired = Cint32.decompress(_item.committedStake) < Cint32.decompress(_list.requiredStake);
-    bool noCommitAfterListUpdate = _item.editionTimestamp <= _list.versionTimestamp
+    bool noCommitAfterListUpdate = _item.commitTimestamp <= _list.versionTimestamp
       && block.timestamp >= _list.versionTimestamp + _list.upgradePeriod;
-    uint256 freeStake = getFreeStake(_account);
-    bool notEnoughFreeStake = freeStake < Cint32.decompress(_list.requiredStake);
+    bool notEnoughFreeStake = getFreeStake(_account) < Cint32.decompress(_list.requiredStake);
     return (
       beingRemoved
       || accountWithdrawing
-      || committedUnderRequired
       || noCommitAfterListUpdate
       || notEnoughFreeStake
       || _list.freeAdoptions

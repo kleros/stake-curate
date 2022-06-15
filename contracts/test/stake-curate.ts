@@ -339,7 +339,7 @@ describe("Stake Curate", async () => {
         .to.be.revertedWith("Not enough to recommit item")
     })
 
-    it("Recommit the stake of an item", async () => {
+    it("Recommit an item", async () => {
       await stakeCurate.connect(deployer).addItem(...addItemArgs)
       // governor, requiredStake, removalPeriod, arbitratorExtraDataId, ipfsUri
       await stakeCurate.connect(governor)
@@ -453,18 +453,6 @@ describe("Stake Curate", async () => {
         .to.be.revertedWith("Only adopter owner can adopt")
     })
 
-    it("Can adopt item whose committed is under required", async () => {
-      await stakeCurate.connect(deployer).addItem(...addItemArgs)
-      await stakeCurate.connect(governor)
-        .updateList(listId, governorId, LIST_REQUIRED_STAKE * 2,
-          LIST_REMOVAL_PERIOD, LIST_UPGRADE_PERIOD, FREE_ADOPTIONS,
-          arbitratorSettingId, IPFS_URI
-        )
-      await expect(stakeCurate.connect(adopter).adoptItem(itemSlot, adopterId))
-        .to.emit(stakeCurate, "ItemAdopted")
-        .withArgs(itemSlot, adopterId)
-    })
-
     it("Can adopt item whose account has free stake under required", async () => {
       await stakeCurate.connect(hobo).addItem(itemSlot, listId, hoboId, IPFS_URI, noBytes)
       await stakeCurate.connect(hobo).startWithdrawAccount(hoboId)
@@ -566,12 +554,10 @@ describe("Stake Curate", async () => {
         .to.be.revertedWith("Item cannot be challenged")
     })
 
-    it("You cannot challenge when committedStake < requiredStake", async () => {
+    it("Cannot challenge an item unincluded due to version", async () => {
+      await ethers.provider.send("evm_increaseTime", [3_600 + 1])
       await stakeCurate.connect(governor)
-        .updateList(listId, governorId, LIST_REQUIRED_STAKE * 2,
-          LIST_REMOVAL_PERIOD, LIST_UPGRADE_PERIOD, FREE_ADOPTIONS,
-          arbitratorSettingId, IPFS_URI
-        )
+        .updateList(listId, ...createListArgs)
       await expect(stakeCurate.connect(challenger)
         .challengeItem(...challengeItemArgs))
         .to.be.revertedWith("Item cannot be challenged")
@@ -679,13 +665,5 @@ describe("Stake Curate", async () => {
         .withArgs(...addItemArgs)
     })
 
-    it("Cannot challenge an item unincluded due to version", async () => {
-      await ethers.provider.send("evm_increaseTime", [3_600 + 1])
-      await stakeCurate.connect(governor)
-        .updateList(listId, ...createListArgs)
-      await expect(stakeCurate.connect(challenger)
-        .challengeItem(...challengeItemArgs))
-        .to.be.revertedWith("Item cannot be challenged")
-    })
   })
 })
