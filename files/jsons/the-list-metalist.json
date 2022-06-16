@@ -1,0 +1,20 @@
+{
+  "policyUri": "/ipfs/QmYM6TdjVJV9xkaX7oWPZX7wmaY3ddyzwrmhbZ6pc28ASH/metalist-list-policy.md",
+  "defaultAgeForInclusion": 60,
+  "listTitle": "The List",
+  "listDescription": "Contains well-formatted lists",
+  "itemName": "list",
+  "itemNamePlural": "lists",
+  "logoUri": "/ipfs/QmUwYPoYQXhZKzHwu7LnmZQw1YN5s9NDnDf5uz9L7NSC6L/curate-logo.png",
+  "isListOfLists": true,
+  "hasHarddata": false,
+  "columns": [
+    {
+      "type": "List",
+      "label": "List",
+      "description": "The list to direct to.",
+      "required": true,
+      "isIdentifier": true
+    }
+  ]
+}

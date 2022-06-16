@@ -1,0 +1,17 @@
+{
+  "title": "An Item was challenged in a List",
+  "description": "Someone disputed the inclusion of an Item in a Stake Curate List",
+  "rulingOptions": {
+    "titles": [
+      "Keep",
+      "Remove"
+    ],
+    "descriptions": [
+      "The Item meets the criteria and should be kept in the List.",
+      "The Item does NOT meet the criteria and should be removed from the List."
+    ]
+  },
+  "category": "Curated Lists",
+  "question": "Should the Item be kept in the List, or should it be removed?",
+  "fileURI": "/ipfs/QmYA2Q13vQj3Hq1aEyGDspdR3mMmZxHhLTDZUNPfzcKyR6/general-policy.md"
+}
