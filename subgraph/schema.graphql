@@ -92,12 +92,16 @@ type ListVersion @entity(immutable: true) {
   list: List!
   "The incremental id given to this version"
   versionId: BigInt!
+  "Moment in which this version was created"
+  timestamp: BigInt!
   "Account pointing to the governor"
   governor: Account!
   "Required stake for item inclusion in this list (uncompressed)"
   requiredStake: BigInt!
   "Removal period for items in this list, in seconds"
   removalPeriod: BigInt!
+  "Upgrade period, during which obsoletion is not an adoption condition (to allow owners to update)"
+  upgradePeriod: BigInt!
   "Arbitration setting for this list"
   arbitrationSetting: ArbitrationSetting!
   "MetaEvidence for this version"
@@ -126,11 +130,8 @@ type Item @entity {
   submissionBlock: BigInt!
   "Status of the item"
   status: ItemStatus!
-  # You need to store "committedStake", because of recommitItem,
-  # as it doesn't produce an edition. Otherwise you could fetch it from
-  # the current list version.
-  "Stake amount committed to preserving the item (uncompressed)"
-  committedStake: BigInt!
+  "Last time the item was committed"
+  commitTimestamp: BigInt!
   "Whether if the item is currently being removed. It might have been removed already"
   removing: Boolean!
   "Timestamp at which the removal is initiated"
@@ -242,9 +243,11 @@ type MetaList @entity(immutable: true) {
   "Columns of this MetaList"
   columns: [Column!]! @derivedFrom(field: "metaList")
   "How many columns are required"
-  requiredCount: Int!
+  requiredCount: Int
   "Recommended age for considering an item inclusion canonical for queries"
-  defaultAgeForInclusion: BigInt
+  defaultAgeForInclusion: BigInt!
+  "After a challenge, optional period of time with no challenges to allow owner to edit."
+  challengeCooldown: BigInt!
   "Displayed name for this list"
   listTitle: String
   "Displayed description for this list"

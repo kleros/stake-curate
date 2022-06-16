@@ -327,9 +327,7 @@ export function handleItemAdded(event: ItemAdded): void {
   item.itemSlot = event.params._itemSlot
   item.submissionBlock = event.block.number
   item.status = "Included"
-  // to get the committedStake, go to the last version of the list.
-  let listVersion = ListVersion.load(list.currentVersion) as ListVersion
-  item.committedStake = listVersion.requiredStake
+  item.commitTimestamp = event.block.timestamp
 
   item.removing = false
   item.removalTimestamp = BigInt.fromU32(0)
@@ -369,11 +367,8 @@ export function handleItemEdited(event: ItemEdited): void {
   // editing an item also recommits stake.
   let itemSlot = ItemSlot.load(event.params._itemSlot.toString()) as ItemSlot
   let item = Item.load(itemSlot.item) as Item
-  let list = List.load(item.list) as List
-  let listVersion = ListVersion.load(list.currentVersion) as ListVersion
-  item.committedStake = listVersion.requiredStake
+  item.commitTimestamp = event.block.timestamp
   // item.save() will be done on the processEdition below
-
   processEdition(
     item,
     event.params._ipfsUri,
@@ -385,10 +380,8 @@ export function handleItemEdited(event: ItemEdited): void {
 export function handleItemAdopted(event: ItemAdopted): void {
   let itemSlot = ItemSlot.load(event.params._itemSlot.toString()) as ItemSlot
   let item = Item.load(itemSlot.item) as Item
-  // adopting recommits stake
-  let list = List.load(item.list) as List
-  let listVersion = ListVersion.load(list.currentVersion) as ListVersion
-  item.committedStake = listVersion.requiredStake
+  // adopting recommits timestamp
+  item.commitTimestamp = event.block.timestamp
   // regular adoption flow
   item.account = event.params._adopterId.toString()
   item.removing = false
@@ -399,9 +392,7 @@ export function handleItemAdopted(event: ItemAdopted): void {
 export function handleItemRecommitted(event: ItemRecommitted): void {
   let itemSlot = ItemSlot.load(event.params._itemSlot.toString()) as ItemSlot
   let item = Item.load(itemSlot.item) as Item
-  let list = List.load(item.list) as List
-  let listVersion = ListVersion.load(list.currentVersion) as ListVersion
-  item.committedStake = listVersion.requiredStake
+  item.commitTimestamp = event.block.timestamp
   item.save()
 }
 
@@ -457,13 +448,11 @@ export function handleItemChallenged(event: ItemChallenged): void {
   let stake = BigInt.compare(listVersion.requiredStake, account.freeStake) === -1
     ? listVersion.requiredStake
     : account.freeStake
-  // 2. recommit this stake to the item, because that's what the contract does
-  item.committedStake = stake
-  // 3. update the freeStake and lockedStake amounts on the account
+  // 2. update the freeStake and lockedStake amounts on the account
   account.lockedStake = account.lockedStake.plus(stake)
   account.freeStake = account.freeStake.minus(stake)
   account.save()
-  // 4. set as dispute stake
+  // 3. set the dispute stake
   dispute.stake = stake
 
   dispute.creationTimestamp = event.block.timestamp
@@ -505,6 +494,7 @@ function processMetaList(listVersion: ListVersion, metaListUri: string): void {
   // get those fields
   let policyUri = jstr(obj.get("policyUri"))
   let defaultAgeForInclusion = jbig(obj.get("defaultAgeForInclusion"))
+  let challengeCooldown = jbig(obj.get("challengeCooldown"))
   let listTitle = jstr(obj.get("listTitle"))
   let listDescription = jstr(obj.get("listDescription"))
   let itemName = jstr(obj.get("itemName"))
@@ -527,8 +517,11 @@ function processMetaList(listVersion: ListVersion, metaListUri: string): void {
     metaList.isMalformatted = true
   }
 
+  let zero = BigInt.fromU32(0)
+
   metaList.policyUri = policyUri
-  metaList.defaultAgeForInclusion = defaultAgeForInclusion
+  metaList.defaultAgeForInclusion = defaultAgeForInclusion ? defaultAgeForInclusion : zero
+  metaList.challengeCooldown = challengeCooldown ? challengeCooldown : zero
   metaList.listTitle = listTitle
   metaList.listDescription = listDescription
   metaList.itemName = itemName
@@ -610,9 +603,11 @@ export function handleListCreated(event: ListCreated): void {
   let listVersion = new ListVersion(`0@${list.id}`)
   listVersion.list = list.id
   listVersion.versionId = BigInt.fromU32(0)
+  listVersion.timestamp = event.block.timestamp
   listVersion.governor = event.params._governorId.toString()
   listVersion.arbitrationSetting = event.params._arbitrationSettingId.toString()
   listVersion.removalPeriod = event.params._removalPeriod
+  listVersion.upgradePeriod = event.params._upgradePeriod
   listVersion.requiredStake = decompress(event.params._requiredStake)
   // we can figure out the MetaList id, but it doesn't exist yet
   listVersion.metaList = listVersion.id
@@ -635,9 +630,11 @@ export function handleListUpdated(event: ListUpdated): void {
   )
   listVersion.list = list.id
   listVersion.versionId = list.versionCount
+  listVersion.timestamp = event.block.timestamp
   listVersion.governor = event.params._governorId.toString()
   listVersion.arbitrationSetting = event.params._arbitrationSettingId.toString()
   listVersion.removalPeriod = event.params._removalPeriod
+  listVersion.upgradePeriod = event.params._upgradePeriod
   listVersion.requiredStake = decompress(event.params._requiredStake)
   // we can figure out the MetaList id, but it doesn't exist yet
   listVersion.metaList = listVersion.id
