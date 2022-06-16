@@ -10,7 +10,7 @@ const sleep = (seconds: number): Promise<void> => {
 }
 
 const WITHDRAWAL_PERIOD = 300
-const METAEVIDENCE = "/ipfs/QmRapgPnC9HM7CueMmJhMMdrh5J9YePBn6SxmS5G3xjwcL/metaevidence.json"
+const METAEVIDENCE = "/ipfs/QmWD6CvGaXBBUwypX3vNDQ3ZQoUYqooEpccAhFHdpx2jRF/metaevidence.json"
 
 async function main() {
   // Hardhat always runs the compile task when running scripts with its command
