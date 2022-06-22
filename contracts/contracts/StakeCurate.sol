@@ -13,7 +13,7 @@ import "@kleros/erc-792/contracts/IArbitrator.sol";
 import "@kleros/erc-792/contracts/erc-1497/IEvidence.sol";
 import "./Cint32.sol";
 
-/// note: should i prevent challenging an item with the account can withdraw?
+/// note: should i prevent challenging an item when the account can withdraw?
 
 /**
  * @title Stake Curate
@@ -53,9 +53,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 removalPeriod; 
     uint56 arbitrationSettingId;
     uint32 versionTimestamp;
-    uint32 upgradePeriod; // extends time to edit the item without getting adopted.
+    uint32 upgradePeriod; // extends time to edit the item without getting adopted. could be uint16 w/ minutes
     bool freeAdoptions; // all items are in adoption all the time
-    uint8 freespace;
+    uint8 challengerStakeRatio; // challengerStake: list.requiredStake * ratio / 16
+    // so it will be a multiplier between [0, 16]
   }
 
   struct Item {
@@ -77,8 +78,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint56 itemSlot;
     uint56 arbitrationSetting;
     DisputeState state;
-    uint32 stake; // unlocks to submitter if Keep, sent to challenger if Remove
-    uint56 freespace;
+    uint32 itemStake; // unlocks to submitter if Keep, sent to challenger if Remove
+    uint32 challengerStake; // put by the challenger, sent to whoever side wins.
+    uint24 freespace;
     // ----
   }
 
@@ -101,10 +103,11 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
 
   event ListCreated(uint56 _governorId, uint32 _requiredStake, uint32 _removalPeriod,
-    uint32 _upgradePeriod, bool _freeAdoptions, uint56 _arbitrationSettingId, string _metalist);
+    uint32 _upgradePeriod, bool _freeAdoptions, uint8 _challengerStakeRatio,
+    uint56 _arbitrationSettingId, string _metalist);
   event ListUpdated(uint56 _listId, uint56 _governorId, uint32 _requiredStake,
     uint32 _removalPeriod, uint32 _upgradePeriod, bool _freeAdoptions,
-    uint56 _arbitrationSettingId, string _metalist);
+    uint8 _challengerStakeRatio, uint56 _arbitrationSettingId, string _metalist);
 
   event ItemAdded(uint56 _itemSlot, uint56 _listId, uint56 _accountId, string _ipfsUri,
     bytes _harddata
@@ -264,6 +267,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _removalPeriod The amount of seconds an item needs to go through removal period to be removed.
    * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
    * @param _freeAdoptions Whether if the items in this list are in adoption all the time.
+   * @param _challengerStakeRatio Expresses the amount of stake the challenger needs to put in.
    * @param _arbitrationSettingId Id of the internally stored arbitrator setting
    * @param _metalist IPFS uri of metaEvidence
    */
@@ -273,6 +277,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _removalPeriod,
     uint32 _upgradePeriod,
     bool _freeAdoptions,
+    uint8 _challengerStakeRatio,
     uint56 _arbitrationSettingId,
     string calldata _metalist
   ) external {
@@ -286,11 +291,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.removalPeriod = _removalPeriod;
     list.upgradePeriod = _upgradePeriod;
     list.freeAdoptions = _freeAdoptions;
+    list.challengerStakeRatio = _challengerStakeRatio;
     list.arbitrationSettingId = _arbitrationSettingId;
     list.versionTimestamp = uint32(block.timestamp);
     emit ListCreated(
       _governorId, _requiredStake, _removalPeriod,
-      _upgradePeriod, _freeAdoptions, _arbitrationSettingId, _metalist
+      _upgradePeriod, _freeAdoptions, _challengerStakeRatio, _arbitrationSettingId, _metalist
     );
   }
 
@@ -302,6 +308,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _removalPeriod Seconds until item is considered removed after starting removal.
    * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
    * @param _freeAdoptions Whether if the items in this list are in adoption all the time.
+   * @param _challengerStakeRatio Expresses the amount of stake the challenger needs to put in.
    * @param _arbitrationSettingId Id of the new arbitrator extra data.
    * @param _metalist IPFS uri of the metadata of this list.
    */
@@ -312,6 +319,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _removalPeriod,
     uint32 _upgradePeriod,
     bool _freeAdoptions,
+    uint8 _challengerStakeRatio,
     uint56 _arbitrationSettingId,
     string calldata _metalist
   ) external {
@@ -324,11 +332,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.removalPeriod = _removalPeriod;
     list.upgradePeriod = _upgradePeriod;
     list.freeAdoptions = _freeAdoptions;
+    list.challengerStakeRatio = _challengerStakeRatio;
     list.arbitrationSettingId = _arbitrationSettingId;
     list.versionTimestamp = uint32(block.timestamp);
     emit ListUpdated(
       _listId, _governorId, _requiredStake,
-      _removalPeriod, _upgradePeriod, _freeAdoptions, _arbitrationSettingId, _metalist
+      _removalPeriod, _upgradePeriod, _freeAdoptions, _challengerStakeRatio,
+      _arbitrationSettingId, _metalist
     );
   }
 
@@ -494,9 +504,19 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint256 _minAmount,
     string calldata _reason
   ) external payable {
+    // this function does many things and stack goes too deep
+    // that's why many things have to be figured out dynamically
     Item storage item = items[_itemSlot];
     List memory list = lists[item.listId];
     Account storage account = accounts[item.accountId];
+
+    ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
+    // challenger must cover challengerStake + arbitrationCost
+    require(msg.value >= 
+      getchallengerStake(list)
+      + arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData),
+      "Not covering the full cost"
+    );
 
     // this validation is not needed for security, since the challenger is only
     // referenced to forward the reward if challenge is won. but, it's nicer.
@@ -513,9 +533,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     ;
     uint56 disputeSlot = firstFreeDisputeSlot(_fromDisputeSlot);
 
-    ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
+    // create dispute
     uint256 arbitratorDisputeId =
-      arbSetting.arbitrator.createDispute{value: msg.value}(
+      arbSetting.arbitrator.createDispute{
+        value: arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData)}(
         RULING_OPTIONS, arbSetting.arbitratorExtraData
       );
     arbitratorAndDisputeIdToDisputeSlot
@@ -534,7 +555,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       challengerId: _challengerId,
       arbitrationSetting: list.arbitrationSettingId,
       state: DisputeState.Used,
-      stake: Cint32.compress(committedAmount),
+      itemStake: Cint32.compress(committedAmount),
+      challengerStake: Cint32.compress(getchallengerStake(list)),
       freespace: 0
     });
 
@@ -595,15 +617,17 @@ contract StakeCurate is IArbitrable, IEvidence {
       // free the locked stake
       uint256 lockedAmount = Cint32.decompress(account.lockedStake);
       unchecked {
-        uint256 updatedLockedAmount = lockedAmount - Cint32.decompress(dispute.stake);
+        uint256 updatedLockedAmount = lockedAmount - Cint32.decompress(dispute.itemStake);
         account.lockedStake = Cint32.compress(updatedLockedAmount);
       }
+      // pay the challengerStake to the submitter
+      payable(account.owner).send(Cint32.decompress(dispute.challengerStake));
     } else {
       // challenger won.
       // 4b. slot is now Free
       item.slotState = ItemSlotState.Free;
-      // now, award the commited stake to challenger
-      uint256 amount = Cint32.decompress(dispute.stake);
+      // now, award the dispute stake to challenger
+      uint256 amount = Cint32.decompress(dispute.itemStake) + Cint32.decompress(dispute.challengerStake);
       // remove amount from the account
       account.fullStake = Cint32.compress(Cint32.decompress(account.fullStake) - amount);
       account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) - amount);
@@ -659,7 +683,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     return (uint256((_itemSlot << 32) + items[_itemSlot].submissionBlock));
   }
 
-  // ----- PURE FUNCTIONS -----
 
   function itemIsInAdoption(Item memory _item, List memory _list, Account memory _account) internal view returns (bool) {
     // check if any of the 5 conditions for adoption is met:
@@ -677,9 +700,17 @@ contract StakeCurate is IArbitrable, IEvidence {
     );
   }
 
+  // ----- PURE FUNCTIONS -----
+
   function getFreeStake(Account memory _account) internal pure returns (uint256) {
     unchecked {
-      return(Cint32.decompress(_account.fullStake) - Cint32.decompress(_account.lockedStake));
+      return (Cint32.decompress(_account.fullStake) - Cint32.decompress(_account.lockedStake));
     }
+  }
+
+  function getchallengerStake(List memory _list) internal pure returns (uint256) {
+    // each increase in challengerStakeRatio makes challenger put 1/16 itemStaks more.
+    // it could be zero, in which case, challenger puts no stake.
+    return Cint32.decompress(_list.requiredStake) * (62_500 * uint256(_list.challengerStakeRatio)) / 1_000_000;
   }
 }

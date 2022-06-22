@@ -33,6 +33,7 @@ describe("Stake Curate", async () => {
   const LIST_REQUIRED_STAKE = 100
   const LIST_REMOVAL_PERIOD = 60
   const LIST_UPGRADE_PERIOD = 60
+  const CHALLENGER_STAKE_RATIO = 0
   const FREE_ADOPTIONS = false
   const CHALLENGE_FEE = 1_000_000_000 // also used for appeals
 
@@ -48,7 +49,7 @@ describe("Stake Curate", async () => {
   const addItemArgs = [itemSlot, listId, deployerId, IPFS_URI, noBytes]
   const challengeItemArgs = [challengerId, itemSlot, disputeSlot, minAmount, IPFS_URI, {value: CHALLENGE_FEE}]
   const createListArgs = [governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD,
-    LIST_UPGRADE_PERIOD, FREE_ADOPTIONS,
+    LIST_UPGRADE_PERIOD, FREE_ADOPTIONS, CHALLENGER_STAKE_RATIO,
     arbitratorSettingId, IPFS_URI
   ]
 
@@ -225,7 +226,8 @@ describe("Stake Curate", async () => {
       .to.be.revertedWith("Account must exist")
       await stakeCurate.connect(deployer).createList(...createListArgs)
       const argsUpdate = [listId, 100, LIST_REQUIRED_STAKE,
-        LIST_REMOVAL_PERIOD, LIST_UPGRADE_PERIOD, FREE_ADOPTIONS, arbitratorSettingId, IPFS_URI]
+        LIST_REMOVAL_PERIOD, LIST_UPGRADE_PERIOD,
+        FREE_ADOPTIONS, CHALLENGER_STAKE_RATIO, arbitratorSettingId, IPFS_URI]
       await expect(stakeCurate.connect(governor).updateList(...argsUpdate))
         .to.be.revertedWith("Account must exist")
     })
@@ -265,7 +267,7 @@ describe("Stake Curate", async () => {
     it("Revert adding if not enough free stake", async () => {
       const updateListArgs = [
         listId, governorId, LIST_REQUIRED_STAKE * 100,
-        LIST_REMOVAL_PERIOD, LIST_UPGRADE_PERIOD, FREE_ADOPTIONS,
+        LIST_REMOVAL_PERIOD, LIST_UPGRADE_PERIOD, FREE_ADOPTIONS, CHALLENGER_STAKE_RATIO,
         arbitratorSettingId, IPFS_URI
       ]
       await stakeCurate.connect(governor).updateList(...updateListArgs)
@@ -332,7 +334,7 @@ describe("Stake Curate", async () => {
       await stakeCurate.connect(hobo).addItem(itemSlot, listId, hoboId, IPFS_URI, noBytes)
       await stakeCurate.connect(governor)
         .updateList(listId, governorId, LIST_REQUIRED_STAKE * 2,
-          LIST_REMOVAL_PERIOD, LIST_UPGRADE_PERIOD, FREE_ADOPTIONS,
+          LIST_REMOVAL_PERIOD, LIST_UPGRADE_PERIOD, FREE_ADOPTIONS, CHALLENGER_STAKE_RATIO,
           arbitratorSettingId, IPFS_URI
         )
       await expect(stakeCurate.connect(hobo).recommitItem(itemSlot))
@@ -344,7 +346,7 @@ describe("Stake Curate", async () => {
       // governor, requiredStake, removalPeriod, arbitratorExtraDataId, ipfsUri
       await stakeCurate.connect(governor)
         .updateList(listId, governorId, LIST_REQUIRED_STAKE * 2,
-          LIST_REMOVAL_PERIOD,LIST_UPGRADE_PERIOD, FREE_ADOPTIONS,
+          LIST_REMOVAL_PERIOD,LIST_UPGRADE_PERIOD, FREE_ADOPTIONS, CHALLENGER_STAKE_RATIO,
           arbitratorSettingId, IPFS_URI
         )
 
@@ -504,7 +506,7 @@ describe("Stake Curate", async () => {
       await stakeCurate.connect(deployer).addItem(...addItemArgs)
       await stakeCurate.connect(governor).updateList(listId, governorId,
         LIST_REQUIRED_STAKE * 2, LIST_REMOVAL_PERIOD, LIST_UPGRADE_PERIOD,
-        true, arbitratorSettingId, IPFS_URI)
+        true, CHALLENGER_STAKE_RATIO, arbitratorSettingId, IPFS_URI)
       await expect(stakeCurate.connect(adopter).adoptItem(itemSlot, adopterId))
         .to.emit(stakeCurate, "ItemAdopted")
         .withArgs(itemSlot, adopterId)
@@ -561,6 +563,26 @@ describe("Stake Curate", async () => {
       await expect(stakeCurate.connect(challenger)
         .challengeItem(...challengeItemArgs))
         .to.be.revertedWith("Item cannot be challenged")
+    })
+
+    it("Cannot challenge if no value is passed", async () => {
+      // no value
+      await expect(stakeCurate.connect(challenger)
+        .challengeItem(...challengeItemArgs.slice(0, challengeItemArgs.length - 1)))
+        .to.be.revertedWith("Not covering the full cost")
+    })
+
+    it("Cannot challenge if challenger stake value is not passed", async () => {
+      // make the list have some challenger stake ratio.
+      await stakeCurate.connect(governor)
+        .updateList(listId, governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD,
+          LIST_UPGRADE_PERIOD, FREE_ADOPTIONS, 16,
+          arbitratorSettingId, IPFS_URI)
+
+      // regular challenge, not providing extra for the challenger stake
+      await expect(stakeCurate.connect(challenger)
+        .challengeItem(...challengeItemArgs))
+        .to.be.revertedWith("Not covering the full cost")
     })
 
     it("Challenge reverts if minAmount is over freeStake", async () => {

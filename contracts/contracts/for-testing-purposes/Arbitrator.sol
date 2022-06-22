@@ -14,10 +14,10 @@ contract Arbitrator is IArbitrator {
 
   struct Dispute {
     IArbitrable arbitrated;
-    uint256 numberOfRulingOptions;
-    uint256 ruling;
+    uint8 numberOfRulingOptions;
+    uint8 ruling;
     DisputeStatus status;
-    uint256 appealDeadline;
+    uint32 appealDeadline;
   }
 
   modifier onlyGovernor() {
@@ -44,7 +44,7 @@ contract Arbitrator is IArbitrator {
     require(msg.value >= arbitrationFee, "Value is less than required arbitration fee.");
     disputes.push(Dispute({
       arbitrated: IArbitrable(msg.sender),
-      numberOfRulingOptions: _choices,
+      numberOfRulingOptions: uint8(_choices),
       ruling: 0,
       status: DisputeStatus.Waiting,
       appealDeadline: 0
@@ -55,8 +55,8 @@ contract Arbitrator is IArbitrator {
 
   function giveRuling(
     uint256 _disputeID,
-    uint256 _ruling,
-    uint256 _appealWindow
+    uint8 _ruling,
+    uint32 _appealWindow
   ) external onlyGovernor {
     Dispute storage dispute = disputes[_disputeID];
     require(_ruling <= dispute.numberOfRulingOptions, "Invalid ruling.");
@@ -64,7 +64,7 @@ contract Arbitrator is IArbitrator {
 
     dispute.ruling = _ruling;
     dispute.status = DisputeStatus.Appealable;
-    dispute.appealDeadline = block.timestamp + _appealWindow;
+    dispute.appealDeadline = uint32(block.timestamp + _appealWindow);
 
     emit AppealPossible(_disputeID, dispute.arbitrated);
   }
