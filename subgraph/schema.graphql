@@ -102,6 +102,10 @@ type ListVersion @entity(immutable: true) {
   removalPeriod: BigInt!
   "Upgrade period, during which obsoletion is not an adoption condition (to allow owners to update)"
   upgradePeriod: BigInt!
+  "Whether all items can be freely adopted without most restrictions"
+  freeAdoptions: Boolean!
+  "Ratio that the challenger places as stake, each increment corresponds to a 1/16 itemStake"
+  challengerStakeRatio: Int!
   "Arbitration setting for this list"
   arbitrationSetting: ArbitrationSetting!
   "MetaEvidence for this version"
@@ -204,10 +208,14 @@ type Dispute @entity {
   # It doesn't matter since StakeCurate only acts on the address of the account.
   "Address of the challenger, who will be rewarded if winning"
   challenger: Bytes!
+  "Reasoning behind the challenge"
+  reason: Evidence!
   "List version at dispute creation"
   listVersion: ListVersion!
   "Amount rewarded to challenger upon successful challenge (uncompressed)"
-  stake: BigInt!
+  itemStake: BigInt!
+  "Amount rewarded to the winning side of the dispute"
+  challengerStake: BigInt!
   "Moment in which this dispute was created"
   creationTimestamp: BigInt!
   "Moment in which this dispute was resolved"
@@ -316,7 +324,7 @@ type EvidenceThread @entity {
 }
 
 type Evidence @entity(immutable: true) {
-  "<localId>@<evidenceGroupId>"
+  "<localId>@<evidenceGroupId>, except reason, which uses <disputeId>"
   id: ID!
   "Incremental id for its thread"
   localId: BigInt!
@@ -330,6 +338,8 @@ type Evidence @entity(immutable: true) {
   arbitrator: Bytes!
   "Whether if the evidence is malformatted"
   isMalformatted: Boolean!
+  "Whether if this is a challenge reason"
+  isReason: Boolean!
 
   # You cannot point to the historical edition or listVersion
   # because you don't know if this evidence is being submitted

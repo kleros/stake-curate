@@ -33,8 +33,9 @@ async function main() {
   await sleep(30)
   console.log("create list with you as governor")
   await stakeCurate.createList(
-    0, 1000, 300, 300, false, 0,
-    "/ipfs/Qmb7NDPafW7DFYYjHt5691d6TMzDJTQ5QS1eqXoywh3egZ/metalist-list.json"
+    0, 1000, 300, 300, false, 0, 0,
+    "/ipfs/Qmb7NDPafW7DFYYjHt5691d6TMzDJTQ5QS1eqXoywh3egZ/metalist-list.json",
+    {gasLimit: 1_000_000}
   )
   await sleep(30)
   console.log("submit item")
@@ -46,8 +47,10 @@ async function main() {
   console.log("challenge item")
   await stakeCurate.challengeItem(0, 0, 0, 0,
     "/ipfs/QmYmfrUVjPZsNLygbmFE8J2jmFF1SU8h4Ju6gf3WsRfxJu/list-0-reason-a.json",
-    {value: 1000000000, gasLimit: 1_000_000,}
+    {value: 1_000_000_000, gasLimit: 1_000_000,}
   )
+
+  await sleep(30)
   console.log("finished doing things")
   await stakeCurate.submitEvidence(
     0, "0xd2cfD0DE28287C5C9a57C3021E6b65cfF28034eA",

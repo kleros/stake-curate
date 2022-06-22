@@ -8,9 +8,9 @@ dataSources:
     name: StakeCurate
     network: kovan
     source:
-      address: "0x5c85a035e8b308fdF6B5ed8F0f00a6988343AAa6"
+      address: "0xE86C391C512dd8Be65B028BccBA577AB70e68D0F"
       abi: StakeCurate
-      startBlock: 32216501
+      startBlock: 32315387
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.6
@@ -53,7 +53,7 @@ dataSources:
           handler: handleItemAdded
         - event: ItemAdopted(uint56,uint56)
           handler: handleItemAdopted
-        - event: ItemChallenged(uint56,uint56)
+        - event: ItemChallenged(uint56,uint56,string)
           handler: handleItemChallenged
         - event: ItemEdited(uint56,string,bytes)
           handler: handleItemEdited
@@ -63,9 +63,9 @@ dataSources:
           handler: handleItemStartRemoval
         - event: ItemStopRemoval(uint56)
           handler: handleItemStopRemoval
-        - event: ListCreated(uint56,uint32,uint32,uint32,bool,uint56,string)
+        - event: ListCreated(uint56,uint32,uint32,uint32,bool,uint8,uint56,string)
           handler: handleListCreated
-        - event: ListUpdated(uint56,uint56,uint32,uint32,uint32,bool,uint56,string)
+        - event: ListUpdated(uint56,uint56,uint32,uint32,uint32,bool,uint8,uint56,string)
           handler: handleListUpdated
         - event: MetaEvidence(indexed uint256,string)
           handler: handleMetaEvidence

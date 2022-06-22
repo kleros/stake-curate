@@ -51,6 +51,10 @@ import {
   JSONValueToArray as jarr,
 } from "./utils"
 
+function deriveEvidenceGroupId(item: Item): BigInt {
+  return item.itemSlot.leftShift(32).plus(item.submissionBlock)
+}
+
 export function handleStakeCurateCreated(event: StakeCurateCreated): void {
   let counter = new GeneralCounter("0")
   counter.accountCount = BigInt.fromU32(0)
@@ -209,6 +213,8 @@ export function handleEvidence(event: EvidenceEvent): void {
   evidence.description = jstr(obj.get("description"))
   evidence.fileUri = jstr(obj.get("fileUri"))
   evidence.fileTypeExtension = jstr(obj.get("fileTypeExtension"))
+
+  evidence.isReason = false
   evidence.save()
 }
 
@@ -341,7 +347,7 @@ export function handleItemAdded(event: ItemAdded): void {
   item.currentDispute = null
 
   // evidenceThread is created on item creation
-  let evidenceGroupId = item.itemSlot.leftShift(32).plus(item.submissionBlock)
+  let evidenceGroupId = deriveEvidenceGroupId(item)
   let evidenceThread = new EvidenceThread(evidenceGroupId.toString())
   evidenceThread.evidenceGroupId = evidenceGroupId
   evidenceThread.item = item.id
@@ -445,20 +451,56 @@ export function handleItemChallenged(event: ItemChallenged): void {
   // getting the stake of the dispute is a bit involved:
   // 1. the stake is equal to min(listVersion.requiredStake, account.freeStake)
   let account = Account.load(item.account) as Account
-  let stake = BigInt.compare(listVersion.requiredStake, account.freeStake) === -1
+  let itemStake = BigInt.compare(listVersion.requiredStake, account.freeStake) === -1
     ? listVersion.requiredStake
     : account.freeStake
   // 2. update the freeStake and lockedStake amounts on the account
-  account.lockedStake = account.lockedStake.plus(stake)
-  account.freeStake = account.freeStake.minus(stake)
+  account.lockedStake = account.lockedStake.plus(itemStake)
+  account.freeStake = account.freeStake.minus(itemStake)
   account.save()
   // 3. set the dispute stake
-  dispute.stake = stake
+  dispute.itemStake = itemStake
+  dispute.challengerStake =
+    itemStake.times(
+      BigInt.fromU32(62_500).times(BigInt.fromU32(listVersion.challengerStakeRatio))
+    ).div(BigInt.fromU32(1_000_000))
 
   dispute.creationTimestamp = event.block.timestamp
   dispute.resolutionTimestamp = null
   // dispute.metaEvidence is truly set on DisputeEvent. writing to stop crash
   dispute.metaEvidence = "id"
+
+  // make the reason. it is an evidence, so it's processed in that way.
+  let reason = new Evidence(dispute.id)
+  dispute.reason = reason.id
+  // Evidence needs arbitrator, so derive from the list version
+  let arbitrationSetting = ArbitrationSetting.load(listVersion.arbitrationSetting) as ArbitrationSetting
+  // reason Evidence don't have a localId, so we use an arbitrary one.
+  reason.localId = BigInt.fromU32(0)
+  reason.thread = deriveEvidenceGroupId(item).toString()
+  reason.rawUri = event.params._reason
+  reason.party = event.transaction.from
+  reason.arbitrator = arbitrationSetting.arbitrator
+  reason.isMalformatted = false // optimistic
+  // commence ipfs parsing
+  let obj = jobj(ipfsToJsonValueOrNull(reason.rawUri))
+
+  if (!obj) {
+    log.warning("Error acquiring json from ipfs. evidence id: {}", [
+      reason.id,
+    ])
+    reason.isMalformatted = true
+    reason.save()
+    return
+  }
+  // parse the fields. note that no longer does a null result in malformat
+  reason.name = jstr(obj.get("name"))
+  reason.description = jstr(obj.get("description"))
+  reason.fileUri = jstr(obj.get("fileUri"))
+  reason.fileTypeExtension = jstr(obj.get("fileTypeExtension"))
+  
+  reason.isReason = true
+  reason.save()
 
   dispute.save()
   item.save()
@@ -608,6 +650,8 @@ export function handleListCreated(event: ListCreated): void {
   listVersion.arbitrationSetting = event.params._arbitrationSettingId.toString()
   listVersion.removalPeriod = event.params._removalPeriod
   listVersion.upgradePeriod = event.params._upgradePeriod
+  listVersion.freeAdoptions = event.params._freeAdoptions
+  listVersion.challengerStakeRatio = event.params._challengerStakeRatio
   listVersion.requiredStake = decompress(event.params._requiredStake)
   // we can figure out the MetaList id, but it doesn't exist yet
   listVersion.metaList = listVersion.id
@@ -635,6 +679,8 @@ export function handleListUpdated(event: ListUpdated): void {
   listVersion.arbitrationSetting = event.params._arbitrationSettingId.toString()
   listVersion.removalPeriod = event.params._removalPeriod
   listVersion.upgradePeriod = event.params._upgradePeriod
+  listVersion.freeAdoptions = event.params._freeAdoptions
+  listVersion.challengerStakeRatio = event.params._challengerStakeRatio
   listVersion.requiredStake = decompress(event.params._requiredStake)
   // we can figure out the MetaList id, but it doesn't exist yet
   listVersion.metaList = listVersion.id
@@ -675,8 +721,8 @@ export function handleRuling(event: Ruling): void {
 
   if (ruling === "Keep") {
     // free stake in account
-    account.freeStake = account.freeStake.plus(dispute.stake)
-    account.lockedStake = account.lockedStake.minus(dispute.stake)
+    account.freeStake = account.freeStake.plus(dispute.itemStake)
+    account.lockedStake = account.lockedStake.minus(dispute.itemStake)
     
     item.status = "Included"
     if (item.removing) {
@@ -684,8 +730,8 @@ export function handleRuling(event: Ruling): void {
     }
   } else {
     // send stake to challenger
-    account.fullStake = account.fullStake.minus(dispute.stake)
-    account.lockedStake = account.lockedStake.minus(dispute.stake)
+    account.fullStake = account.fullStake.minus(dispute.itemStake)
+    account.lockedStake = account.lockedStake.minus(dispute.itemStake)
 
     item.status = "Excluded"
   }
