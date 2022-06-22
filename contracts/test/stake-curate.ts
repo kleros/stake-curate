@@ -527,7 +527,7 @@ describe("Stake Curate", async () => {
 
     it("You can challenge an item", async () => {
       await expect(await stakeCurate.connect(challenger).challengeItem(...challengeItemArgs))
-        .to.emit(stakeCurate, "ItemChallenged").withArgs(itemSlot, disputeSlot)
+        .to.emit(stakeCurate, "ItemChallenged").withArgs(itemSlot, disputeSlot, IPFS_URI)
         .to.emit(stakeCurate, "Dispute") // how to encodePacked in js? todo
         .to.emit(stakeCurate, "Evidence") // to get evidenceGroupId
         .to.changeEtherBalance(challenger, -CHALLENGE_FEE)
@@ -599,7 +599,7 @@ describe("Stake Curate", async () => {
       await expect(stakeCurate.connect(challenger).challengeItem(
         challengerId, itemSlot + 1, disputeSlot, minAmount, IPFS_URI, { value: CHALLENGE_FEE }
       ))
-        .to.emit(stakeCurate, "ItemChallenged").withArgs(itemSlot + 1, disputeSlot + 1)
+        .to.emit(stakeCurate, "ItemChallenged").withArgs(itemSlot + 1, disputeSlot + 1, IPFS_URI)
     })
 
     it("You cannot start removal of a disputed item", async () => {

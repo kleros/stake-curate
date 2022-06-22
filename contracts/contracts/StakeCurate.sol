@@ -119,7 +119,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ItemRecommitted(uint56 _itemSlot);
   event ItemAdopted(uint56 _itemSlot, uint56 _adopterId);
 
-  event ItemChallenged(uint56 _itemSlot, uint56 _disputeSlot);
+  event ItemChallenged(uint56 _itemSlot, uint56 _disputeSlot, string _reason);
 
   // ----- CONTRACT STORAGE -----
 
@@ -560,7 +560,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       freespace: 0
     });
 
-    emit ItemChallenged(_itemSlot, disputeSlot);
+    emit ItemChallenged(_itemSlot, disputeSlot, _reason);
     // ERC 1497
     uint256 evidenceGroupId = getEvidenceGroupId(_itemSlot);
     emit Dispute(arbSetting.arbitrator, arbitratorDisputeId, currentMetaEvidenceId, evidenceGroupId);
