@@ -32,6 +32,8 @@ type GeneralCounter @entity {
   arbitrationSettingCount: BigInt!
   "How much time must elapse from request to withdraw a stake"
   withdrawalPeriod: BigInt!
+  "The window of time a challenger has to reference a previous edition"
+  challengeWindow: BigInt!
   "Address able to change some parameters in the contract"
   governor: Bytes!
 }
@@ -208,6 +210,10 @@ type Dispute @entity {
   # It doesn't matter since StakeCurate only acts on the address of the account.
   "Address of the challenger, who will be rewarded if winning"
   challenger: Bytes!
+  "Timestamp of the edition that is being targeted"
+  editionTimestamp: BigInt!
+  "Edition that is referenced through the timestamp, and is the focus of the Dispute"
+  referencedEdition: Edition!
   "Reasoning behind the challenge"
   reason: Evidence!
   "List version at dispute creation"

@@ -55,6 +55,33 @@ function deriveEvidenceGroupId(item: Item): BigInt {
   return item.itemSlot.leftShift(32).plus(item.submissionBlock)
 }
 
+function deriveEditionByTimestamp(item: Item, timestamp: BigInt): Edition {
+  // check latest first
+  let latestEdition = Edition.load(item.currentEdition) as Edition
+  if (latestEdition.timestamp.le(timestamp)) return latestEdition
+
+  // so, we do a binary search. the objective is to find the pair of editions such that
+  // e1.timestamp <= timestamp < e2.timestamp
+  // in other words, the latest edition available at timestamp.
+  let min = BigInt.fromU32(0)
+  let max = item.editionCount
+  while (true) {
+    let i = (min.plus(max)).div(BigInt.fromU32(2))
+    let e1 = Edition.load(i.toString() + "@" + item.id) as Edition
+    let e2 = Edition.load(i.plus(BigInt.fromU32(1)).toString() + "@" + item.id) as Edition
+    if (e1.timestamp.gt(timestamp)) {
+      // check lower
+      max = i
+    } else if (e2.timestamp.le(timestamp)) {
+      // check over
+      min = i
+    } else {
+      // then, e1 is the edition available at that time.
+      return e1
+    }
+  }
+}
+
 export function handleStakeCurateCreated(event: StakeCurateCreated): void {
   let counter = new GeneralCounter("0")
   counter.accountCount = BigInt.fromU32(0)
@@ -83,6 +110,7 @@ export function handleChangedStakeCurateSettings(
   // stake curate was deployed
   let counter = new GeneralCounter("0") as GeneralCounter
   counter.withdrawalPeriod = event.params._withdrawalPeriod
+  counter.challengeWindow = event.params._challengeWindow
   counter.governor = event.params._governor
   counter.save()
 }
@@ -469,6 +497,10 @@ export function handleItemChallenged(event: ItemChallenged): void {
   dispute.resolutionTimestamp = null
   // dispute.metaEvidence is truly set on DisputeEvent. writing to stop crash
   dispute.metaEvidence = "id"
+  // get the referenced edition
+  dispute.editionTimestamp = event.params._editionTimestamp
+  let edition = deriveEditionByTimestamp(item, dispute.editionTimestamp)
+  dispute.referencedEdition = edition.id
 
   // make the reason. it is an evidence, so it's processed in that way.
   let reason = new Evidence(dispute.id)
