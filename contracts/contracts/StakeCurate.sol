@@ -93,7 +93,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // Used to initialize counters in the subgraph
   event StakeCurateCreated();
-  event ChangedStakeCurateSettings(uint256 _withdrawalPeriod, address _governor);
+  event ChangedStakeCurateSettings(uint256 _withdrawalPeriod, uint32 _challengeWindow, address _governor);
 
   event AccountCreated(address _owner, uint32 _fullStake);
   event AccountFunded(uint56 _accountId, uint32 _fullStake);
@@ -119,13 +119,16 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ItemRecommitted(uint56 _itemSlot);
   event ItemAdopted(uint56 _itemSlot, uint56 _adopterId);
 
-  event ItemChallenged(uint56 _itemSlot, uint56 _disputeSlot, string _reason);
+  event ItemChallenged(uint56 _itemSlot, uint56 _disputeSlot, uint32 _editionTimestamp, string _reason);
 
   // ----- CONTRACT STORAGE -----
 
   // governor of stake curate, only used to update metaEvidence
   address public governor;
   uint256 public withdrawalPeriod;
+  // span of time granted to challenger to reference previous editions
+  // check its usage in challengeItem and the general policy to understand its role
+  uint32 public challengeWindow; 
   uint256 public currentMetaEvidenceId;
 
   uint56 public listCount;
@@ -145,11 +148,12 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _governor Address able to update withdrawalPeriod, metaEvidence, and change govenor
    * @param _metaEvidence IPFS uri of the initial MetaEvidence
    */
-  constructor(uint256 _withdrawalPeriod, address _governor, string memory _metaEvidence) {
+  constructor(uint256 _withdrawalPeriod, uint32 _challengeWindow, address _governor, string memory _metaEvidence) {
     withdrawalPeriod = _withdrawalPeriod;
+    challengeWindow = _challengeWindow;
     governor = _governor;
     emit StakeCurateCreated();
-    emit ChangedStakeCurateSettings(_withdrawalPeriod, governor);
+    emit ChangedStakeCurateSettings(_withdrawalPeriod, _challengeWindow, _governor);
     emit MetaEvidence(0, _metaEvidence);
   }
 
@@ -162,13 +166,14 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _metaEvidence IPFS uri to the new MetaEvidence
    */
   function changeStakeCurateSettings(
-    uint256 _withdrawalPeriod, address _governor,
+    uint256 _withdrawalPeriod, uint32 _challengeWindow, address _governor,
     string calldata _metaEvidence
   ) external {
     require(msg.sender == governor, "Only governor can change these settings");
     withdrawalPeriod = _withdrawalPeriod;
+    challengeWindow = _challengeWindow;
     governor = _governor;
-    emit ChangedStakeCurateSettings(_withdrawalPeriod, _governor);
+    emit ChangedStakeCurateSettings(_withdrawalPeriod, _challengeWindow, _governor);
     currentMetaEvidenceId++;
     emit MetaEvidence(currentMetaEvidenceId, _metaEvidence);
   }
@@ -490,6 +495,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _challengerId Id of the account challenger is challenging on behalf
    * @param _itemSlot Slot of the item to challenge.
    * @param _fromDisputeSlot DisputeSlot to start finding a place to store the dispute
+   * @param _editionTimestamp The challenge is made upon the edition available at this timestamp. 
    * @param _minAmount Frontrunning protection due to this edge case:
    * Submitter frontruns submitting a wrong item, and challenges himself to lock himself out of
    * funds, so that his free stake is lower than whatever he has committed or is the requirement
@@ -501,14 +507,19 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint56 _challengerId,
     uint56 _itemSlot,
     uint56 _fromDisputeSlot,
+    uint32 _editionTimestamp,
     uint256 _minAmount,
     string calldata _reason
   ) external payable {
     // this function does many things and stack goes too deep
     // that's why many things have to be figured out dynamically
+    require(_editionTimestamp + challengeWindow >= block.timestamp, "Too late to challenge that edition");
     Item storage item = items[_itemSlot];
     List memory list = lists[item.listId];
-    Account storage account = accounts[item.accountId];
+
+    // editions of outdated versions are unincluded and thus cannot be challenged
+    // this require covers the edge case: item owner updates before the challenge window
+    require(_editionTimestamp >= list.versionTimestamp, "This edition belongs to an outdated list version");
 
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
     // challenger must cover challengerStake + arbitrationCost
@@ -523,7 +534,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(accounts[_challengerId].owner == msg.sender, "Only account owner can challenge on behalf");
     
     require(itemCanBeChallenged(item, list), "Item cannot be challenged");
-    uint256 freeStake = getFreeStake(account);
+    uint256 freeStake = getFreeStake(accounts[item.accountId]);
     require(_minAmount <= freeStake, "Not enough free stake to satisfy minAmount");
 
     // All requirements met, begin
@@ -547,7 +558,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     // just reset the timestamp to current block when challenge fails.
     item.removingTimestamp = 0;
     unchecked {
-      account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) + committedAmount);
+      accounts[item.accountId].lockedStake =
+        Cint32.compress(Cint32.decompress(accounts[item.accountId].lockedStake) + committedAmount);
     }
     disputes[disputeSlot] = DisputeSlot({
       arbitratorDisputeId: arbitratorDisputeId,
@@ -560,7 +572,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       freespace: 0
     });
 
-    emit ItemChallenged(_itemSlot, disputeSlot, _reason);
+    emit ItemChallenged(_itemSlot, disputeSlot, _editionTimestamp, _reason);
     // ERC 1497
     uint256 evidenceGroupId = getEvidenceGroupId(_itemSlot);
     emit Dispute(arbSetting.arbitrator, arbitratorDisputeId, currentMetaEvidenceId, evidenceGroupId);

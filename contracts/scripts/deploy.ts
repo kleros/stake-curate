@@ -10,6 +10,7 @@ const sleep = (seconds: number): Promise<void> => {
 }
 
 const WITHDRAWAL_PERIOD = 300
+const CHALLENGE_WINDOW = 300
 const METAEVIDENCE = "/ipfs/QmWD6CvGaXBBUwypX3vNDQ3ZQoUYqooEpccAhFHdpx2jRF/metaevidence.json"
 
 async function main() {
@@ -23,7 +24,7 @@ async function main() {
   // We get the contract to deploy
   const wallet = new ethers.Wallet(process.env.PRIVATE_KEY)
   const StakeCurate = await ethers.getContractFactory("StakeCurate")
-  const stakeCurate = await StakeCurate.deploy(WITHDRAWAL_PERIOD, wallet.address, METAEVIDENCE)
+  const stakeCurate = await StakeCurate.deploy(WITHDRAWAL_PERIOD, CHALLENGE_WINDOW, wallet.address, METAEVIDENCE)
 
   await stakeCurate.deployed()
 
@@ -35,7 +36,7 @@ async function main() {
   // verify in etherscan
   const etherscanResponse = await run("verify:verify", {
     address: stakeCurate.address,
-    constructorArguments: [WITHDRAWAL_PERIOD, wallet.address, METAEVIDENCE],
+    constructorArguments: [WITHDRAWAL_PERIOD, CHALLENGE_WINDOW, wallet.address, METAEVIDENCE],
   })
 
   // if you mess this up:

@@ -45,17 +45,18 @@ async function main() {
   )
   await sleep(30)
   console.log("challenge item")
-  await stakeCurate.challengeItem(0, 0, 0, 0,
+  await stakeCurate.challengeItem(0, 0, 0, Math.floor(new Date().getTime() / 1000), 0, 
     "/ipfs/QmYmfrUVjPZsNLygbmFE8J2jmFF1SU8h4Ju6gf3WsRfxJu/list-0-reason-a.json",
     {value: 1_000_000_000, gasLimit: 1_000_000,}
   )
 
   await sleep(30)
-  console.log("finished doing things")
+  console.log("submit evidence")
   await stakeCurate.submitEvidence(
     0, "0xd2cfD0DE28287C5C9a57C3021E6b65cfF28034eA",
     "/ipfs/QmWwpTQaoeq6ivULmi8XBbbEm7ur2DxWwjAe1duQcm3hS2/list-0-evidence.json"
   )
+  console.log("finished")
 }
 
 // We recommend this pattern to be able to use async/await everywhere

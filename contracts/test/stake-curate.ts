@@ -9,6 +9,7 @@ const IPFS_URI = "/ipfs/Qme7ss3ARVgxv6rXqVPiikMJ8u2NLgmgszg13pYrDKEoiu/item.json
 
 use(waffleChai)
 const ACCOUNT_WITHDRAW_PERIOD = 604_800 // 1 week
+const CHALLENGE_WINDOW = 604_800 * 52 // 1 year. totally unrealistic, chosen to ease testing.
 
 const deployContracts = async (deployer: SignerWithAddress) => {
   const Arbitrator = await ethers.getContractFactory("Arbitrator", deployer)
@@ -16,7 +17,8 @@ const deployContracts = async (deployer: SignerWithAddress) => {
   await arbitrator.deployed()
 
   const StakeCurate = await ethers.getContractFactory("StakeCurate", deployer)
-  const stakeCurate = await StakeCurate.deploy(ACCOUNT_WITHDRAW_PERIOD, deployer.address, IPFS_URI)
+  const stakeCurate = await StakeCurate.deploy(ACCOUNT_WITHDRAW_PERIOD,
+    CHALLENGE_WINDOW, deployer.address, IPFS_URI)
   await stakeCurate.deployed()
   await stakeCurate.connect(deployer).createArbitrationSetting(arbitrator.address, "0x")
 
@@ -44,10 +46,12 @@ describe("Stake Curate", async () => {
   const listId = 0
   const itemSlot = 0
   const minAmount = 0
+  const editionTimestamp = Math.floor(new Date().getTime() / 1000) 
   const disputeSlot = 0
   const arbitratorSettingId = 0
   const addItemArgs = [itemSlot, listId, deployerId, IPFS_URI, noBytes]
-  const challengeItemArgs = [challengerId, itemSlot, disputeSlot, minAmount, IPFS_URI, {value: CHALLENGE_FEE}]
+  const challengeItemArgs = [challengerId, itemSlot, disputeSlot,
+    editionTimestamp, minAmount, IPFS_URI, {value: CHALLENGE_FEE}]
   const createListArgs = [governorId, LIST_REQUIRED_STAKE, LIST_REMOVAL_PERIOD,
     LIST_UPGRADE_PERIOD, FREE_ADOPTIONS, CHALLENGER_STAKE_RATIO,
     arbitratorSettingId, IPFS_URI
@@ -65,16 +69,16 @@ describe("Stake Curate", async () => {
 
     it("Change settings", async () => {
       await expect(stakeCurate.connect(deployer)
-        .changeStakeCurateSettings(ACCOUNT_WITHDRAW_PERIOD, deployer.address, IPFS_URI))
+        .changeStakeCurateSettings(ACCOUNT_WITHDRAW_PERIOD, CHALLENGE_WINDOW, deployer.address, IPFS_URI))
         .to.emit(stakeCurate, "ChangedStakeCurateSettings")
-        .withArgs(ACCOUNT_WITHDRAW_PERIOD, deployer.address)
+        .withArgs(ACCOUNT_WITHDRAW_PERIOD, CHALLENGE_WINDOW, deployer.address)
         .to.emit(stakeCurate, "MetaEvidence")
         .withArgs(1, IPFS_URI)
     })
 
     it("Interloper cannot change settings", async () => {
       await expect(stakeCurate.connect(interloper)
-        .changeStakeCurateSettings(ACCOUNT_WITHDRAW_PERIOD, deployer.address, IPFS_URI))
+        .changeStakeCurateSettings(ACCOUNT_WITHDRAW_PERIOD, CHALLENGE_WINDOW, deployer.address, IPFS_URI))
         .to.revertedWith("Only governor can change these settings")
     })
   })
@@ -409,7 +413,7 @@ describe("Stake Curate", async () => {
     it("Cannot edit item if itemSlot is not Used (it's being disputed or was challenged out)", async () => {
       await stakeCurate.connect(deployer).addItem(...addItemArgs)
       await stakeCurate.connect(challenger)
-        .challengeItem(challengerId, itemSlot, disputeSlot, minAmount, IPFS_URI, {value: CHALLENGE_FEE})
+        .challengeItem(...challengeItemArgs)
       await expect(stakeCurate.connect(deployer).editItem(itemSlot, IPFS_URI, noBytes))
         .to.be.revertedWith("ItemSlot must be Used")
 
@@ -527,7 +531,7 @@ describe("Stake Curate", async () => {
 
     it("You can challenge an item", async () => {
       await expect(await stakeCurate.connect(challenger).challengeItem(...challengeItemArgs))
-        .to.emit(stakeCurate, "ItemChallenged").withArgs(itemSlot, disputeSlot, IPFS_URI)
+        .to.emit(stakeCurate, "ItemChallenged").withArgs(itemSlot, disputeSlot, editionTimestamp, IPFS_URI)
         .to.emit(stakeCurate, "Dispute") // how to encodePacked in js? todo
         .to.emit(stakeCurate, "Evidence") // to get evidenceGroupId
         .to.changeEtherBalance(challenger, -CHALLENGE_FEE)
@@ -541,7 +545,7 @@ describe("Stake Curate", async () => {
 
     it("You cannot challenge a free item slot", async () => {
       await expect(stakeCurate.connect(challenger)
-        .challengeItem(challengerId, itemSlot + 1, disputeSlot, minAmount,
+        .challengeItem(challengerId, itemSlot + 1, disputeSlot, editionTimestamp, minAmount,
           IPFS_URI, {value: CHALLENGE_FEE})
         )
         .to.be.revertedWith("Item cannot be challenged")
@@ -587,7 +591,7 @@ describe("Stake Curate", async () => {
 
     it("Challenge reverts if minAmount is over freeStake", async () => {
       await expect(stakeCurate.connect(challenger)
-        .challengeItem(challengerId, itemSlot, disputeSlot, 2000,
+        .challengeItem(challengerId, itemSlot, disputeSlot, editionTimestamp, 2000,
             IPFS_URI, {value: CHALLENGE_FEE})
           )
         .to.be.revertedWith("Not enough free stake to satisfy minAmount")
@@ -597,9 +601,12 @@ describe("Stake Curate", async () => {
       await stakeCurate.connect(deployer).addItem(...addItemArgs)
       await stakeCurate.connect(challenger).challengeItem(...challengeItemArgs)
       await expect(stakeCurate.connect(challenger).challengeItem(
-        challengerId, itemSlot + 1, disputeSlot, minAmount, IPFS_URI, { value: CHALLENGE_FEE }
+        challengerId, itemSlot + 1, disputeSlot,
+        editionTimestamp, minAmount, IPFS_URI, { value: CHALLENGE_FEE }
       ))
-        .to.emit(stakeCurate, "ItemChallenged").withArgs(itemSlot + 1, disputeSlot + 1, IPFS_URI)
+        .to.emit(stakeCurate, "ItemChallenged").withArgs(
+          itemSlot + 1, disputeSlot + 1, editionTimestamp, IPFS_URI
+        )
     })
 
     it("You cannot start removal of a disputed item", async () => {
@@ -687,5 +694,11 @@ describe("Stake Curate", async () => {
         .withArgs(...addItemArgs)
     })
 
-  })
+    it("Cannot challenge an edition outside of challenge window", async () => {
+      await ethers.provider.send("evm_increaseTime", [CHALLENGE_WINDOW + 1])
+  
+      await expect(stakeCurate.connect(challenger).challengeItem(...challengeItemArgs))
+        .to.be.revertedWith("Too late to challenge that edition")
+    })
+  })  
 })
