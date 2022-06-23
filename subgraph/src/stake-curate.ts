@@ -90,6 +90,7 @@ export function handleStakeCurateCreated(event: StakeCurateCreated): void {
   // these two will be overwritten by first setting
   counter.withdrawalPeriod = BigInt.fromU32(0) 
   counter.governor = event.transaction.from
+  counter.challengeWindow = BigInt.fromU32(0)
 
   counter.save()
   
