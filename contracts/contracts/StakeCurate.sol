@@ -75,9 +75,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 listId;
     uint32 removingTimestamp; // frontrunning protection
     ItemSlotState slotState;
-    uint32 submissionBlock; // only used to make evidenceGroupId.
     uint32 commitTimestamp;
-    uint24 freeSpace;
+    uint56 freeSpace;
     bytes harddata;
   }
 
@@ -119,7 +118,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _removalPeriod, uint32 _upgradePeriod, bool _freeAdoptions,
     uint8 _challengerStakeRatio, uint64 _arbitrationSettingId, string _metalist);
 
-  event ItemAdded(uint64 _itemSlot, uint64 _listId, uint64 _accountId, string _ipfsUri,
+  event ItemAdded(uint64 _listId, uint64 _accountId, string _ipfsUri,
     bytes _harddata
   );
   event ItemEdited(uint64 _itemSlot, string _ipfsUri, bytes _harddata);
@@ -135,6 +134,8 @@ contract StakeCurate is IArbitrable, IEvidence {
   
   StakeCurateSettings public stakeCurateSettings;
 
+  // todo get these counts in a single struct?
+  uint64 public itemCount;
   uint64 public listCount;
   uint64 public accountCount;
   uint64 public arbitrationSettingCount;
@@ -366,25 +367,22 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @notice Adds an item in a slot.
-   * @param _fromItemSlot Slot to look for a free itemSlot from.
    * @param _listId Id of the list the item will be included in
    * @param _accountId Id of the account owning the item.
    * @param _ipfsUri IPFS uri that links to the content of the item
    * @param _harddata Optional data that is stored on-chain
    */
   function addItem(
-    uint64 _fromItemSlot,
     uint64 _listId,
     uint64 _accountId,
     string calldata _ipfsUri,
     bytes calldata _harddata
-  ) external {
-    uint64 itemSlot = firstFreeItemSlot(_fromItemSlot);
+  ) external returns (uint64 itemId) {
     Account memory account = accounts[_accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    Item storage item = items[itemSlot];
+    itemId = itemCount++; 
+    Item storage item = items[itemId];
     List storage list = lists[_listId];
-    require(item.submissionBlock != block.number, "Wait until next block");
     uint256 freeStake = getFreeStake(account);
     require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough free stake");
     // Item can be submitted
@@ -392,16 +390,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.accountId = _accountId;
     item.listId = _listId;
     item.removingTimestamp = 0;
-    // (not sure) in arbitrum, this is actually the L1 block number
-    // which means, collisions in the L2 might be possible, so
-    // this doesn't guarantee identity. when moving to arbitrum,
-    // remember to change this to get the arb block number instead.
-    // https://developer.offchainlabs.com/docs/time_in_arbitrum
-    item.submissionBlock = uint32(block.number);
     item.commitTimestamp = uint32(block.timestamp);
     item.harddata = _harddata;
 
-    emit ItemAdded(itemSlot, _listId, _accountId, _ipfsUri, _harddata);
+    emit ItemAdded(_listId, _accountId, _ipfsUri, _harddata);
   }
 
   function editItem(
@@ -593,7 +585,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     emit ItemChallenged(_itemSlot, disputeSlot, _editionTimestamp, _reason);
     // ERC 1497
-    uint256 evidenceGroupId = getEvidenceGroupId(_itemSlot);
+    uint256 evidenceGroupId = _itemSlot;
     emit Dispute(
       arbSetting.arbitrator, arbitratorDisputeId,
       stakeCurateSettings.currentMetaEvidenceId, evidenceGroupId
@@ -615,8 +607,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _evidence IPFS uri linking to the evidence.
    */
   function submitEvidence(uint64 _itemSlot, IArbitrator _arbitrator, string calldata _evidence) external {
-    uint256 evidenceGroupId = getEvidenceGroupId(_itemSlot);
-    emit Evidence(_arbitrator, evidenceGroupId, msg.sender, _evidence);
+    emit Evidence(_arbitrator, _itemSlot, msg.sender, _evidence);
   }
 
   /**
@@ -688,18 +679,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     return i;
   }
 
-  function firstFreeItemSlot(uint64 _fromSlot) internal view returns (uint64) {
-    uint64 i = _fromSlot;
-    Item memory item = items[i];
-    List memory list = lists[item.listId];
-    while (!itemIsFree(item, list)) {
-      unchecked {i++;}
-      item = items[i];
-      list = lists[item.listId];
-    }
-    return(i);
-  }
-
   function itemIsFree(Item memory _item, List memory _list) internal view returns (bool) {
     unchecked {
       bool notInUse = _item.slotState == ItemSlotState.Free;
@@ -717,13 +696,6 @@ contract StakeCurate is IArbitrable, IEvidence {
       && _item.slotState == ItemSlotState.Used
     );
   }
-
-  function getEvidenceGroupId(uint64 _itemSlot) public view returns (uint256) {
-    // evidenceGroupId is obtained from the (itemSlot, submissionBlock) pair
-    // I couldn't figure out how to encodePacked on the subgraph, plus this is cheaper.
-    return (uint256((_itemSlot << 32) + items[_itemSlot].submissionBlock));
-  }
-
 
   function itemIsInAdoption(Item memory _item, List memory _list, Account memory _account) internal view returns (bool) {
     // check if any of the 5 conditions for adoption is met:
