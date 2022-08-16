@@ -50,49 +50,48 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 fullStake;
     uint32 lockedStake;
     uint32 withdrawingTimestamp; // frontrunning protection. overflows in 2106.
-    // when this becomes a problem, shift bits around and use days instead of seconds, for example.
   }
 
-  /* note on why ids can be 56 bits
-    say gas needed is 32. overflow is not economical
-    that's ~10**18 bytes of calldata. to publish on L1
-    lets say, 0.00001 cent per id increment. thats 0.7T$, for a grief.
-    and during this effort, every user can leave to a new contract.
-  */
   struct List {
-    uint56 governorId; // governor needs an account
+    uint64 governorId; // governor needs an account
     uint32 requiredStake; 
     uint32 removalPeriod; 
-    uint56 arbitrationSettingId;
+    uint64 arbitrationSettingId;
     uint32 versionTimestamp;
+    // vvv reconsider removing this. holding items is a liability.
+    // if keep, rename. todo
     uint32 upgradePeriod; // extends time to edit the item without getting adopted. could be uint16 w/ minutes
+    // ----
+    // todo rethink this slot. no longer challengerStakeRatio needs this constraint.
+    // plus, another slot to keep track of the erc20 address will be needed later anyway.
+
     bool freeAdoptions; // all items are in adoption all the time
     uint8 challengerStakeRatio; // challengerStake: list.requiredStake * ratio / 16
     // so it will be a multiplier between [0, 16]
   }
 
   struct Item {
-    uint56 accountId;
-    uint56 listId;
+    uint64 accountId;
+    uint64 listId;
     uint32 removingTimestamp; // frontrunning protection
     ItemSlotState slotState;
     uint32 submissionBlock; // only used to make evidenceGroupId.
     uint32 commitTimestamp;
-    uint40 freeSpace;
+    uint24 freeSpace;
     bytes harddata;
   }
 
   struct DisputeSlot {
     uint256 arbitratorDisputeId;
     // ----
-    uint56 challengerId;
-    uint56 itemSlot;
-    uint56 arbitrationSetting;
+    uint64 challengerId;
+    uint64 itemSlot;
+    uint64 arbitrationSetting;
     DisputeState state;
     uint32 itemStake; // unlocks to submitter if Keep, sent to challenger if Remove
-    uint32 challengerStake; // put by the challenger, sent to whoever side wins.
     uint24 freespace;
     // ----
+    uint32 challengerStake; // put by the challenger, sent to whoever side wins.
   }
 
   struct ArbitrationSetting {
@@ -107,45 +106,45 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ChangedStakeCurateSettings(uint256 _withdrawalPeriod, uint32 _challengeWindow, address _governor);
 
   event AccountCreated(address _owner, uint32 _fullStake);
-  event AccountFunded(uint56 _accountId, uint32 _fullStake);
-  event AccountStartWithdraw(uint56 _accountId);
-  event AccountWithdrawn(uint56 _accountId, uint32 _fullStake);
+  event AccountFunded(uint64 _accountId, uint32 _fullStake);
+  event AccountStartWithdraw(uint64 _accountId);
+  event AccountWithdrawn(uint64 _accountId, uint32 _fullStake);
 
   event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
 
-  event ListCreated(uint56 _governorId, uint32 _requiredStake, uint32 _removalPeriod,
+  event ListCreated(uint64 _governorId, uint32 _requiredStake, uint32 _removalPeriod,
     uint32 _upgradePeriod, bool _freeAdoptions, uint8 _challengerStakeRatio,
-    uint56 _arbitrationSettingId, string _metalist);
-  event ListUpdated(uint56 _listId, uint56 _governorId, uint32 _requiredStake,
+    uint64 _arbitrationSettingId, string _metalist);
+  event ListUpdated(uint64 _listId, uint64 _governorId, uint32 _requiredStake,
     uint32 _removalPeriod, uint32 _upgradePeriod, bool _freeAdoptions,
-    uint8 _challengerStakeRatio, uint56 _arbitrationSettingId, string _metalist);
+    uint8 _challengerStakeRatio, uint64 _arbitrationSettingId, string _metalist);
 
-  event ItemAdded(uint56 _itemSlot, uint56 _listId, uint56 _accountId, string _ipfsUri,
+  event ItemAdded(uint64 _itemSlot, uint64 _listId, uint64 _accountId, string _ipfsUri,
     bytes _harddata
   );
-  event ItemEdited(uint56 _itemSlot, string _ipfsUri, bytes _harddata);
-  event ItemStartRemoval(uint56 _itemSlot);
-  event ItemStopRemoval(uint56 _itemSlot);
+  event ItemEdited(uint64 _itemSlot, string _ipfsUri, bytes _harddata);
+  event ItemStartRemoval(uint64 _itemSlot);
+  event ItemStopRemoval(uint64 _itemSlot);
   // there's no need for "ItemRemoved", since it will automatically be considered removed after the period.
-  event ItemRecommitted(uint56 _itemSlot);
-  event ItemAdopted(uint56 _itemSlot, uint56 _adopterId);
+  event ItemRecommitted(uint64 _itemSlot);
+  event ItemAdopted(uint64 _itemSlot, uint64 _adopterId);
 
-  event ItemChallenged(uint56 _itemSlot, uint56 _disputeSlot, uint32 _editionTimestamp, string _reason);
+  event ItemChallenged(uint64 _itemSlot, uint64 _disputeSlot, uint32 _editionTimestamp, string _reason);
 
   // ----- CONTRACT STORAGE -----
   
   StakeCurateSettings public stakeCurateSettings;
 
-  uint56 public listCount;
-  uint56 public accountCount;
-  uint56 public arbitrationSettingCount;
+  uint64 public listCount;
+  uint64 public accountCount;
+  uint64 public arbitrationSettingCount;
 
-  mapping(uint56 => Account) public accounts;
-  mapping(uint56 => List) public lists;
-  mapping(uint56 => Item) public items;
-  mapping(uint56 => DisputeSlot) public disputes;
-  mapping(address => mapping(uint256 => uint56)) public arbitratorAndDisputeIdToDisputeSlot;
-  mapping(uint56 => ArbitrationSetting) public arbitrationSettings;
+  mapping(uint64 => Account) public accounts;
+  mapping(uint64 => List) public lists;
+  mapping(uint64 => Item) public items;
+  mapping(uint64 => DisputeSlot) public disputes;
+  mapping(address => mapping(uint256 => uint64)) public arbitratorAndDisputeIdToDisputeSlot;
+  mapping(uint64 => ArbitrationSetting) public arbitrationSettings;
 
   /** 
    * @dev Constructs the StakeCurate contract.
@@ -220,7 +219,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @dev Funds an existing account.
    * @param _accountId The id of the account to fund. Doesn't have to belong to sender.
    */
-  function fundAccount(uint56 _accountId) external payable {
+  function fundAccount(uint64 _accountId) external payable {
     unchecked {
       Account storage account = accounts[_accountId];
       uint256 fullStake = Cint32.decompress(account.fullStake) + msg.value;
@@ -235,7 +234,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * Withdrawals are not instant to prevent frontrunning.
    * @param _accountId The id of the account. Must belong to sender.
    */
-  function startWithdrawAccount(uint56 _accountId) external {
+  function startWithdrawAccount(uint64 _accountId) external {
     Account storage account = accounts[_accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
     account.withdrawingTimestamp = uint32(block.timestamp);
@@ -247,7 +246,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _accountId The id of the account. Must belong to sender.
    * @param _amount The amount to be withdrawn.
    */
-  function withdrawAccount(uint56 _accountId, uint256 _amount) external {
+  function withdrawAccount(uint64 _accountId, uint256 _amount) external {
     unchecked {
       Account storage account = accounts[_accountId];
       require(account.owner == msg.sender, "Only account owner can invoke account");
@@ -295,18 +294,18 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _metalist IPFS uri of metaEvidence
    */
   function createList(
-    uint56 _governorId,
+    uint64 _governorId,
     uint32 _requiredStake,
     uint32 _removalPeriod,
     uint32 _upgradePeriod,
     bool _freeAdoptions,
     uint8 _challengerStakeRatio,
-    uint56 _arbitrationSettingId,
+    uint64 _arbitrationSettingId,
     string calldata _metalist
   ) external {
     require(_governorId < accountCount, "Account must exist");
     require(_arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
-    uint56 listId = listCount;
+    uint64 listId = listCount;
     unchecked {listCount++;}
     List storage list = lists[listId];
     list.governorId = _governorId;
@@ -336,14 +335,14 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _metalist IPFS uri of the metadata of this list.
    */
   function updateList(
-    uint56 _listId,
-    uint56 _governorId,
+    uint64 _listId,
+    uint64 _governorId,
     uint32 _requiredStake,
     uint32 _removalPeriod,
     uint32 _upgradePeriod,
     bool _freeAdoptions,
     uint8 _challengerStakeRatio,
-    uint56 _arbitrationSettingId,
+    uint64 _arbitrationSettingId,
     string calldata _metalist
   ) external {
     require(_governorId < accountCount, "Account must exist");
@@ -374,13 +373,13 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _harddata Optional data that is stored on-chain
    */
   function addItem(
-    uint56 _fromItemSlot,
-    uint56 _listId,
-    uint56 _accountId,
+    uint64 _fromItemSlot,
+    uint64 _listId,
+    uint64 _accountId,
     string calldata _ipfsUri,
     bytes calldata _harddata
   ) external {
-    uint56 itemSlot = firstFreeItemSlot(_fromItemSlot);
+    uint64 itemSlot = firstFreeItemSlot(_fromItemSlot);
     Account memory account = accounts[_accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
     Item storage item = items[itemSlot];
@@ -406,7 +405,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   function editItem(
-    uint56 _itemSlot,
+    uint64 _itemSlot,
     string calldata _ipfsUri,
     bytes calldata _harddata
   ) external {
@@ -429,7 +428,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @dev Starts an item removal process.
    * @param _itemSlot Slot of the item to remove.
    */
-  function startRemoveItem(uint56 _itemSlot) external {
+  function startRemoveItem(uint64 _itemSlot) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
@@ -444,7 +443,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @dev Cancels an ongoing removal process.
    * @param _itemSlot Slot of the item.
    */
-  function cancelRemoveItem(uint56 _itemSlot) external {
+  function cancelRemoveItem(uint64 _itemSlot) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
     List memory list = lists[item.listId];
@@ -464,7 +463,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _itemSlot Slot of the item to adopt.
    * @param _adopterId Id of an account belonging to adopter, that will be new owner.
    */
-  function adoptItem(uint56 _itemSlot, uint56 _adopterId) external {
+  function adoptItem(uint64 _itemSlot, uint64 _adopterId) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
     Account memory adopter = accounts[_adopterId];
@@ -488,7 +487,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * item submitters. Items have to opt in to the new list version.
    * @param _itemSlot Slot of the item to recommit.
    */
-  function recommitItem(uint56 _itemSlot) external {
+  function recommitItem(uint64 _itemSlot) external {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
     List memory list = lists[item.listId];
@@ -518,9 +517,9 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _reason IPFS uri containing the evidence for the challenge.
    */
   function challengeItem(
-    uint56 _challengerId,
-    uint56 _itemSlot,
-    uint56 _fromDisputeSlot,
+    uint64 _challengerId,
+    uint64 _itemSlot,
+    uint64 _fromDisputeSlot,
     uint32 _editionTimestamp,
     uint256 _minAmount,
     string calldata _reason
@@ -559,7 +558,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       ? Cint32.decompress(list.requiredStake)
       : freeStake
     ;
-    uint56 disputeSlot = firstFreeDisputeSlot(_fromDisputeSlot);
+    uint64 disputeSlot = firstFreeDisputeSlot(_fromDisputeSlot);
 
     // create dispute
     uint256 arbitratorDisputeId =
@@ -615,7 +614,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * to render evidence properly.
    * @param _evidence IPFS uri linking to the evidence.
    */
-  function submitEvidence(uint56 _itemSlot, IArbitrator _arbitrator, string calldata _evidence) external {
+  function submitEvidence(uint64 _itemSlot, IArbitrator _arbitrator, string calldata _evidence) external {
     uint256 evidenceGroupId = getEvidenceGroupId(_itemSlot);
     emit Evidence(_arbitrator, evidenceGroupId, msg.sender, _evidence);
   }
@@ -681,16 +680,16 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   // ----- VIEW FUNCTIONS -----
-  function firstFreeDisputeSlot(uint56 _fromSlot) internal view returns (uint56) {
-    uint56 i = _fromSlot;
+  function firstFreeDisputeSlot(uint64 _fromSlot) internal view returns (uint64) {
+    uint64 i = _fromSlot;
     while (disputes[i].state != DisputeState.Free) {
       unchecked {i++;}
     }
     return i;
   }
 
-  function firstFreeItemSlot(uint56 _fromSlot) internal view returns (uint56) {
-    uint56 i = _fromSlot;
+  function firstFreeItemSlot(uint64 _fromSlot) internal view returns (uint64) {
+    uint64 i = _fromSlot;
     Item memory item = items[i];
     List memory list = lists[item.listId];
     while (!itemIsFree(item, list)) {
@@ -719,7 +718,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     );
   }
 
-  function getEvidenceGroupId(uint56 _itemSlot) public view returns (uint256) {
+  function getEvidenceGroupId(uint64 _itemSlot) public view returns (uint256) {
     // evidenceGroupId is obtained from the (itemSlot, submissionBlock) pair
     // I couldn't figure out how to encodePacked on the subgraph, plus this is cheaper.
     return (uint256((_itemSlot << 32) + items[_itemSlot].submissionBlock));
