@@ -13,8 +13,6 @@ import "@kleros/erc-792/contracts/IArbitrator.sol";
 import "@kleros/erc-792/contracts/erc-1497/IEvidence.sol";
 import "./Cint32.sol";
 
-/// note: should i prevent challenging an item when the account can withdraw?
-
 /**
  * @title Stake Curate
  * @author Green
@@ -27,7 +25,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used }
-  /// @dev Item may be free even if "Used"! Use itemIsFree view. (because of removingTimestamp)
+  /// @dev Item may be free even if "Used"! Use itemIsFree view. (because of retractionTimestamp)
   enum ItemState { Free, Used, Disputed }
 
   uint256 internal constant RULING_OPTIONS = 2;
@@ -54,8 +52,8 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   struct List {
     uint64 governorId; // governor needs an account
-    uint32 requiredStake; 
-    uint32 removalPeriod; 
+    uint32 requiredStake;
+    uint32 retractionPeriod; 
     uint64 arbitrationSettingId;
     uint32 versionTimestamp;
     // vvv reconsider removing this. holding items is a liability.
@@ -73,7 +71,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   struct Item {
     uint64 accountId;
     uint64 listId;
-    uint32 removingTimestamp; // frontrunning protection
+    uint32 retractionTimestamp;
     ItemState state;
     uint32 commitTimestamp;
     uint56 freeSpace;
@@ -122,9 +120,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     bytes _harddata
   );
   event ItemEdited(uint64 _itemId, string _ipfsUri, bytes _harddata);
-  event ItemStartRemoval(uint64 _itemId);
-  event ItemStopRemoval(uint64 _itemId);
-  // there's no need for "ItemRemoved", since it will automatically be considered removed after the period.
+  event ItemStartRetraction(uint64 _itemId);
+  event ItemStopRetraction(uint64 _itemId);
+  // there's no need for "ItemRetracted"
+  // since it will automatically be considered retracted after the period.
   event ItemRecommitted(uint64 _itemId);
   event ItemAdopted(uint64 _itemId, uint64 _adopterId);
 
@@ -287,7 +286,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @dev Creates a list. They store all settings related to the dispute, stake, etc.
    * @param _governorId The id of the governor.
    * @param _requiredStake The Cint32 version of the required stake per item.
-   * @param _removalPeriod The amount of seconds an item needs to go through removal period to be removed.
+   * @param _retractionPeriod The amount of seconds an item needs to go through retraction period to be removed.
    * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
    * @param _freeAdoptions Whether if the items in this list are in adoption all the time.
    * @param _challengerStakeRatio Expresses the amount of stake the challenger needs to put in.
@@ -297,7 +296,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   function createList(
     uint64 _governorId,
     uint32 _requiredStake,
-    uint32 _removalPeriod,
+    uint32 _retractionPeriod,
     uint32 _upgradePeriod,
     bool _freeAdoptions,
     uint8 _challengerStakeRatio,
@@ -311,14 +310,14 @@ contract StakeCurate is IArbitrable, IEvidence {
     List storage list = lists[listId];
     list.governorId = _governorId;
     list.requiredStake = _requiredStake;
-    list.removalPeriod = _removalPeriod;
+    list.retractionPeriod = _retractionPeriod;
     list.upgradePeriod = _upgradePeriod;
     list.freeAdoptions = _freeAdoptions;
     list.challengerStakeRatio = _challengerStakeRatio;
     list.arbitrationSettingId = _arbitrationSettingId;
     list.versionTimestamp = uint32(block.timestamp);
     emit ListCreated(
-      _governorId, _requiredStake, _removalPeriod,
+      _governorId, _requiredStake, _retractionPeriod,
       _upgradePeriod, _freeAdoptions, _challengerStakeRatio, _arbitrationSettingId, _metalist
     );
   }
@@ -328,7 +327,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _listId Id of the list to be updated.
    * @param _governorId Id of the new governor.
    * @param _requiredStake Cint32 version of the new required stake per item.
-   * @param _removalPeriod Seconds until item is considered removed after starting removal.
+   * @param _retractionPeriod Seconds until item is considered retraction after starting retraction.
    * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
    * @param _freeAdoptions Whether if the items in this list are in adoption all the time.
    * @param _challengerStakeRatio Expresses the amount of stake the challenger needs to put in.
@@ -339,7 +338,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 _listId,
     uint64 _governorId,
     uint32 _requiredStake,
-    uint32 _removalPeriod,
+    uint32 _retractionPeriod,
     uint32 _upgradePeriod,
     bool _freeAdoptions,
     uint8 _challengerStakeRatio,
@@ -352,7 +351,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(accounts[list.governorId].owner == msg.sender, "Only governor can update list");
     list.governorId = _governorId;
     list.requiredStake = _requiredStake;
-    list.removalPeriod = _removalPeriod;
+    list.retractionPeriod = _retractionPeriod;
     list.upgradePeriod = _upgradePeriod;
     list.freeAdoptions = _freeAdoptions;
     list.challengerStakeRatio = _challengerStakeRatio;
@@ -360,7 +359,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.versionTimestamp = uint32(block.timestamp);
     emit ListUpdated(
       _listId, _governorId, _requiredStake,
-      _removalPeriod, _upgradePeriod, _freeAdoptions, _challengerStakeRatio,
+      _retractionPeriod, _upgradePeriod, _freeAdoptions, _challengerStakeRatio,
       _arbitrationSettingId, _metalist
     );
   }
@@ -389,7 +388,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.state = ItemState.Used;
     item.accountId = _accountId;
     item.listId = _listId;
-    item.removingTimestamp = 0;
+    item.retractionTimestamp = 0;
     item.commitTimestamp = uint32(block.timestamp);
     item.harddata = _harddata;
 
@@ -404,7 +403,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(item.removingTimestamp == 0, "Item is being removed");
+    require(item.retractionTimestamp == 0, "Item is being removed");
     require(item.state == ItemState.Used, "ItemSlot must be Used");
     uint256 freeStake = getFreeStake(account);
     List memory list = lists[item.listId];
@@ -417,33 +416,33 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   /**
-   * @dev Starts an item removal process.
-   * @param _itemId Item to remove.
+   * @dev Starts an item retraction process.
+   * @param _itemId Item to retract.
    */
-  function startRemoveItem(uint64 _itemId) external {
+  function startRetractItem(uint64 _itemId) external {
     Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(item.removingTimestamp == 0, "Item is already being removed");
+    require(item.retractionTimestamp == 0, "Item is already being retracted");
     require(item.state == ItemState.Used, "ItemSlot must be Used");
 
-    item.removingTimestamp = uint32(block.timestamp);
-    emit ItemStartRemoval(_itemId);
+    item.retractionTimestamp = uint32(block.timestamp);
+    emit ItemStartRetraction(_itemId);
   }
 
   /**
-   * @dev Cancels an ongoing removal process.
-   * @param _itemId Item to stop removing.
+   * @dev Cancels an ongoing retraction process.
+   * @param _itemId Item to stop retracting.
    */
-  function cancelRemoveItem(uint64 _itemId) external {
+  function cancelRetractItem(uint64 _itemId) external {
     Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
     List memory list = lists[item.listId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(!itemIsFree(item, list), "ItemSlot must not be free"); // You can cancel removal while Disputed
-    require(item.removingTimestamp != 0, "Item is not being removed");
-    item.removingTimestamp = 0;
-    emit ItemStopRemoval(_itemId);
+    require(!itemIsFree(item, list), "ItemSlot must not be free"); // You can cancel retraction while Disputed
+    require(item.retractionTimestamp != 0, "Item is not being retracted");
+    item.retractionTimestamp = 0;
+    emit ItemStopRetraction(_itemId);
   }
 
   /**
@@ -468,7 +467,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(Cint32.decompress(list.requiredStake) <= freeStake, "Cannot afford adopting this item");
 
     item.accountId = _adopterId;
-    item.removingTimestamp = 0;
+    item.retractionTimestamp = 0;
     item.commitTimestamp = uint32(block.timestamp);
 
     emit ItemAdopted(_itemId, _adopterId);
@@ -485,7 +484,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     List memory list = lists[item.listId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
     require(!itemIsFree(item, list) && item.state == ItemState.Used, "ItemSlot must be Used");
-    require(item.removingTimestamp == 0, "Item is being removed");
+    require(item.retractionTimestamp == 0, "Item is being retracted");
     
     uint256 freeStake = getFreeStake((account));
     require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough to recommit item");
@@ -565,9 +564,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       [address(arbSetting.arbitrator)][arbitratorDisputeId] = disputeSlot;
 
     item.state = ItemState.Disputed;
-    // todo revisit the removing logic. instead of setting the removing timestamp to 0,
-    // just reset the timestamp to current block when challenge fails.
-    item.removingTimestamp = 0;
+
     unchecked {
       accounts[item.accountId].lockedStake =
         Cint32.compress(Cint32.decompress(accounts[item.accountId].lockedStake) + committedAmount);
@@ -642,8 +639,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     if (_ruling == 1 || _ruling == 0) {
       // staker won.
       // 4a. return item to used, not disputed.
-      if (item.removingTimestamp != 0) {
-        item.removingTimestamp = uint32(block.timestamp);
+      if (item.retractionTimestamp != 0) {
+        item.retractionTimestamp = uint32(block.timestamp);
       }
       item.state = ItemState.Used;
       // free the locked stake
@@ -682,8 +679,8 @@ contract StakeCurate is IArbitrable, IEvidence {
   function itemIsFree(Item memory _item, List memory _list) internal view returns (bool) {
     unchecked {
       bool notInUse = _item.state == ItemState.Free;
-      bool removed = (_item.removingTimestamp + _list.removalPeriod) <= block.timestamp;
-      return (notInUse || removed);
+      bool retracted = (_item.retractionTimestamp + _list.retractionPeriod) <= block.timestamp;
+      return (notInUse || retracted);
     }
   }
 
@@ -699,13 +696,13 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   function itemIsInAdoption(Item memory _item, List memory _list, Account memory _account) internal view returns (bool) {
     // check if any of the 5 conditions for adoption is met:
-    bool beingRemoved = _item.removingTimestamp != 0;
+    bool beingRetracted = _item.retractionTimestamp != 0;
     bool accountWithdrawing = _account.withdrawingTimestamp != 0;
     bool noCommitAfterListUpdate = _item.commitTimestamp <= _list.versionTimestamp
       && block.timestamp >= _list.versionTimestamp + _list.upgradePeriod;
     bool notEnoughFreeStake = getFreeStake(_account) < Cint32.decompress(_list.requiredStake);
     return (
-      beingRemoved
+      beingRetracted
       || accountWithdrawing
       || noCommitAfterListUpdate
       || notEnoughFreeStake
