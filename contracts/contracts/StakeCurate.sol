@@ -28,7 +28,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used }
   /// @dev Item may be free even if "Used"! Use itemIsFree view. (because of removingTimestamp)
-  enum ItemSlotState { Free, Used, Disputed }
+  enum ItemState { Free, Used, Disputed }
 
   uint256 internal constant RULING_OPTIONS = 2;
 
@@ -74,7 +74,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 accountId;
     uint64 listId;
     uint32 removingTimestamp; // frontrunning protection
-    ItemSlotState slotState;
+    ItemState state;
     uint32 commitTimestamp;
     uint56 freeSpace;
     bytes harddata;
@@ -84,7 +84,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint256 arbitratorDisputeId;
     // ----
     uint64 challengerId;
-    uint64 itemSlot;
+    uint64 itemId;
     uint64 arbitrationSetting;
     DisputeState state;
     uint32 itemStake; // unlocks to submitter if Keep, sent to challenger if Remove
@@ -121,14 +121,14 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ItemAdded(uint64 _listId, uint64 _accountId, string _ipfsUri,
     bytes _harddata
   );
-  event ItemEdited(uint64 _itemSlot, string _ipfsUri, bytes _harddata);
-  event ItemStartRemoval(uint64 _itemSlot);
-  event ItemStopRemoval(uint64 _itemSlot);
+  event ItemEdited(uint64 _itemId, string _ipfsUri, bytes _harddata);
+  event ItemStartRemoval(uint64 _itemId);
+  event ItemStopRemoval(uint64 _itemId);
   // there's no need for "ItemRemoved", since it will automatically be considered removed after the period.
-  event ItemRecommitted(uint64 _itemSlot);
-  event ItemAdopted(uint64 _itemSlot, uint64 _adopterId);
+  event ItemRecommitted(uint64 _itemId);
+  event ItemAdopted(uint64 _itemId, uint64 _adopterId);
 
-  event ItemChallenged(uint64 _itemSlot, uint64 _disputeSlot, uint32 _editionTimestamp, string _reason);
+  event ItemChallenged(uint64 _itemId, uint64 _disputeSlot, uint32 _editionTimestamp, string _reason);
 
   // ----- CONTRACT STORAGE -----
   
@@ -366,7 +366,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   /**
-   * @notice Adds an item in a slot.
+   * @notice Adds an item to a list.
    * @param _listId Id of the list the item will be included in
    * @param _accountId Id of the account owning the item.
    * @param _ipfsUri IPFS uri that links to the content of the item
@@ -386,7 +386,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint256 freeStake = getFreeStake(account);
     require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough free stake");
     // Item can be submitted
-    item.slotState = ItemSlotState.Used;
+    item.state = ItemState.Used;
     item.accountId = _accountId;
     item.listId = _listId;
     item.removingTimestamp = 0;
@@ -397,15 +397,15 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   function editItem(
-    uint64 _itemSlot,
+    uint64 _itemId,
     string calldata _ipfsUri,
     bytes calldata _harddata
   ) external {
-    Item storage item = items[_itemSlot];
+    Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
     require(item.removingTimestamp == 0, "Item is being removed");
-    require(item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
+    require(item.state == ItemState.Used, "ItemSlot must be Used");
     uint256 freeStake = getFreeStake(account);
     List memory list = lists[item.listId];
     require(freeStake >= Cint32.decompress(list.requiredStake), "Cannot afford to edit this item");
@@ -413,37 +413,37 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.harddata = _harddata;
     item.commitTimestamp = uint32(block.timestamp);
 
-    emit ItemEdited(_itemSlot, _ipfsUri, _harddata);
+    emit ItemEdited(_itemId, _ipfsUri, _harddata);
   }
 
   /**
    * @dev Starts an item removal process.
-   * @param _itemSlot Slot of the item to remove.
+   * @param _itemId Item to remove.
    */
-  function startRemoveItem(uint64 _itemSlot) external {
-    Item storage item = items[_itemSlot];
+  function startRemoveItem(uint64 _itemId) external {
+    Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
     require(item.removingTimestamp == 0, "Item is already being removed");
-    require(item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
+    require(item.state == ItemState.Used, "ItemSlot must be Used");
 
     item.removingTimestamp = uint32(block.timestamp);
-    emit ItemStartRemoval(_itemSlot);
+    emit ItemStartRemoval(_itemId);
   }
 
   /**
    * @dev Cancels an ongoing removal process.
-   * @param _itemSlot Slot of the item.
+   * @param _itemId Item to stop removing.
    */
-  function cancelRemoveItem(uint64 _itemSlot) external {
-    Item storage item = items[_itemSlot];
+  function cancelRemoveItem(uint64 _itemId) external {
+    Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
     List memory list = lists[item.listId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
     require(!itemIsFree(item, list), "ItemSlot must not be free"); // You can cancel removal while Disputed
     require(item.removingTimestamp != 0, "Item is not being removed");
     item.removingTimestamp = 0;
-    emit ItemStopRemoval(_itemSlot);
+    emit ItemStopRemoval(_itemId);
   }
 
   /**
@@ -452,17 +452,17 @@ contract StakeCurate is IArbitrable, IEvidence {
    * It also allows reviving invalid items, while preserving the history.
    * For lists with freeAdoptions, adopters can altruistically fix wrong items
    * instead of challenging and removing them.
-   * @param _itemSlot Slot of the item to adopt.
+   * @param _itemId Item to adopt.
    * @param _adopterId Id of an account belonging to adopter, that will be new owner.
    */
-  function adoptItem(uint64 _itemSlot, uint64 _adopterId) external {
-    Item storage item = items[_itemSlot];
+  function adoptItem(uint64 _itemId, uint64 _adopterId) external {
+    Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
     Account memory adopter = accounts[_adopterId];
     List memory list = lists[item.listId];
 
     require(adopter.owner == msg.sender, "Only adopter owner can adopt");
-    require(item.slotState == ItemSlotState.Used, "Item slot must be Used");
+    require(item.state == ItemState.Used, "Item slot must be Used");
     require(itemIsInAdoption(item, list, account), "Item is not in adoption");
     uint256 freeStake = getFreeStake(adopter);
     require(Cint32.decompress(list.requiredStake) <= freeStake, "Cannot afford adopting this item");
@@ -471,20 +471,20 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.removingTimestamp = 0;
     item.commitTimestamp = uint32(block.timestamp);
 
-    emit ItemAdopted(_itemSlot, _adopterId);
+    emit ItemAdopted(_itemId, _adopterId);
   }
 
   /**
    * @dev Updates commit timestamp of an item. This is used as protection for 
    * item submitters. Items have to opt in to the new list version.
-   * @param _itemSlot Slot of the item to recommit.
+   * @param _itemId Item to recommit.
    */
-  function recommitItem(uint64 _itemSlot) external {
-    Item storage item = items[_itemSlot];
+  function recommitItem(uint64 _itemId) external {
+    Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
     List memory list = lists[item.listId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(!itemIsFree(item, list) && item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
+    require(!itemIsFree(item, list) && item.state == ItemState.Used, "ItemSlot must be Used");
     require(item.removingTimestamp == 0, "Item is being removed");
     
     uint256 freeStake = getFreeStake((account));
@@ -492,13 +492,13 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     item.commitTimestamp = uint32(block.timestamp);
 
-    emit ItemRecommitted(_itemSlot);
+    emit ItemRecommitted(_itemId);
   }
 
   /**
    * @notice Challenge an item, with the intent of removing it and obtaining a reward.
    * @param _challengerId Id of the account challenger is challenging on behalf
-   * @param _itemSlot Slot of the item to challenge.
+   * @param _itemId Item to challenge.
    * @param _fromDisputeSlot DisputeSlot to start finding a place to store the dispute
    * @param _editionTimestamp The challenge is made upon the edition available at this timestamp. 
    * @param _minAmount Frontrunning protection due to this edge case:
@@ -510,7 +510,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    */
   function challengeItem(
     uint64 _challengerId,
-    uint64 _itemSlot,
+    uint64 _itemId,
     uint64 _fromDisputeSlot,
     uint32 _editionTimestamp,
     uint256 _minAmount,
@@ -522,7 +522,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       _editionTimestamp + stakeCurateSettings.challengeWindow >= block.timestamp,
       "Too late to challenge that edition"
     );
-    Item storage item = items[_itemSlot];
+    Item storage item = items[_itemId];
     List memory list = lists[item.listId];
 
     // editions of outdated versions are unincluded and thus cannot be challenged
@@ -564,7 +564,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     arbitratorAndDisputeIdToDisputeSlot
       [address(arbSetting.arbitrator)][arbitratorDisputeId] = disputeSlot;
 
-    item.slotState = ItemSlotState.Disputed;
+    item.state = ItemState.Disputed;
     // todo revisit the removing logic. instead of setting the removing timestamp to 0,
     // just reset the timestamp to current block when challenge fails.
     item.removingTimestamp = 0;
@@ -574,7 +574,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     }
     disputes[disputeSlot] = DisputeSlot({
       arbitratorDisputeId: arbitratorDisputeId,
-      itemSlot: _itemSlot,
+      itemId: _itemId,
       challengerId: _challengerId,
       arbitrationSetting: list.arbitrationSettingId,
       state: DisputeState.Used,
@@ -583,9 +583,9 @@ contract StakeCurate is IArbitrable, IEvidence {
       freespace: 0
     });
 
-    emit ItemChallenged(_itemSlot, disputeSlot, _editionTimestamp, _reason);
+    emit ItemChallenged(_itemId, disputeSlot, _editionTimestamp, _reason);
     // ERC 1497
-    uint256 evidenceGroupId = _itemSlot;
+    uint256 evidenceGroupId = _itemId;
     emit Dispute(
       arbSetting.arbitrator, arbitratorDisputeId,
       stakeCurateSettings.currentMetaEvidenceId, evidenceGroupId
@@ -595,7 +595,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @dev Submits evidence to potentially any dispute or item.
-   * @param _itemSlot The slot containing the item to submit evidence to.
+   * @param _itemId Id of the item to submit evidence to.
    * @param _arbitrator The arbitrator to submit evidence to. This is needed because:
    * 1. it's not possible to obtain the dispute from an item
    * 2. the item may be currently ruled by a different arbitrator than the one
@@ -606,8 +606,8 @@ contract StakeCurate is IArbitrable, IEvidence {
    * to render evidence properly.
    * @param _evidence IPFS uri linking to the evidence.
    */
-  function submitEvidence(uint64 _itemSlot, IArbitrator _arbitrator, string calldata _evidence) external {
-    emit Evidence(_arbitrator, _itemSlot, msg.sender, _evidence);
+  function submitEvidence(uint64 _itemId, IArbitrator _arbitrator, string calldata _evidence) external {
+    emit Evidence(_arbitrator, _itemId, msg.sender, _evidence);
   }
 
   /**
@@ -634,7 +634,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // * bad arbitrator can rule this, and then reuse the disputeId.
     arbitratorAndDisputeIdToDisputeSlot[msg.sender][_disputeId] = 0;
 
-    Item storage item = items[dispute.itemSlot];
+    Item storage item = items[dispute.itemId];
     Account storage account = accounts[item.accountId];
     // 3. apply ruling. what to do when refuse to arbitrate?
     // just default towards keeping the item.
@@ -645,7 +645,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       if (item.removingTimestamp != 0) {
         item.removingTimestamp = uint32(block.timestamp);
       }
-      item.slotState = ItemSlotState.Used;
+      item.state = ItemState.Used;
       // free the locked stake
       uint256 lockedAmount = Cint32.decompress(account.lockedStake);
       unchecked {
@@ -657,7 +657,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     } else {
       // challenger won.
       // 4b. slot is now Free
-      item.slotState = ItemSlotState.Free;
+      item.state = ItemState.Free;
       // now, award the dispute stake to challenger
       uint256 amount = Cint32.decompress(dispute.itemStake) + Cint32.decompress(dispute.challengerStake);
       // remove amount from the account
@@ -681,7 +681,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   function itemIsFree(Item memory _item, List memory _list) internal view returns (bool) {
     unchecked {
-      bool notInUse = _item.slotState == ItemSlotState.Free;
+      bool notInUse = _item.state == ItemState.Free;
       bool removed = (_item.removingTimestamp + _list.removalPeriod) <= block.timestamp;
       return (notInUse || removed);
     }
@@ -693,7 +693,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     return (
       !free
       && (_item.commitTimestamp > _list.versionTimestamp)
-      && _item.slotState == ItemSlotState.Used
+      && _item.state == ItemState.Used
     );
   }
 
