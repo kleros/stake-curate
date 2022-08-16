@@ -32,6 +32,18 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   uint256 internal constant RULING_OPTIONS = 2;
 
+  /// @dev Makes SLOADs trigger hot accesses more often.
+  struct StakeCurateSettings {
+    // can change these settings
+    address governor;
+    // to be able to withdraw freeStake after init
+    uint32 withdrawalPeriod;
+    // span of time granted to challenger to reference previous editions
+    // check its usage in challengeItem and the general policy to understand its role
+    uint32 challengeWindow;
+    uint32 currentMetaEvidenceId;
+  }
+
   /// @dev Some uint256 are lossily compressed into uint32 using Cint32.sol
   struct Account {
     address owner;
@@ -122,14 +134,8 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ItemChallenged(uint56 _itemSlot, uint56 _disputeSlot, uint32 _editionTimestamp, string _reason);
 
   // ----- CONTRACT STORAGE -----
-
-  // governor of stake curate, only used to update metaEvidence
-  address public governor;
-  uint256 public withdrawalPeriod;
-  // span of time granted to challenger to reference previous editions
-  // check its usage in challengeItem and the general policy to understand its role
-  uint32 public challengeWindow; 
-  uint256 public currentMetaEvidenceId;
+  
+  StakeCurateSettings public stakeCurateSettings;
 
   uint56 public listCount;
   uint56 public accountCount;
@@ -148,10 +154,12 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _governor Address able to update withdrawalPeriod, metaEvidence, and change govenor
    * @param _metaEvidence IPFS uri of the initial MetaEvidence
    */
-  constructor(uint256 _withdrawalPeriod, uint32 _challengeWindow, address _governor, string memory _metaEvidence) {
-    withdrawalPeriod = _withdrawalPeriod;
-    challengeWindow = _challengeWindow;
-    governor = _governor;
+  constructor(uint32 _withdrawalPeriod, uint32 _challengeWindow, address _governor, string memory _metaEvidence) {
+    stakeCurateSettings.withdrawalPeriod = _withdrawalPeriod;
+    stakeCurateSettings.challengeWindow = _challengeWindow;
+    stakeCurateSettings.governor = _governor;
+    // starting metaEvidenceId is 0, no need to set it. 
+
     // purpose: prevent dispute zero from being used.
     // this dispute has the ArbitrationSetting = 0. it will be
     // made impossible to rule with, and kept with arbitrator = address(0) forever,
@@ -174,16 +182,16 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _metaEvidence IPFS uri to the new MetaEvidence
    */
   function changeStakeCurateSettings(
-    uint256 _withdrawalPeriod, uint32 _challengeWindow, address _governor,
+    uint32 _withdrawalPeriod, uint32 _challengeWindow, address _governor,
     string calldata _metaEvidence
   ) external {
-    require(msg.sender == governor, "Only governor can change these settings");
-    withdrawalPeriod = _withdrawalPeriod;
-    challengeWindow = _challengeWindow;
-    governor = _governor;
+    require(msg.sender == stakeCurateSettings.governor, "Only governor can change these settings");
+    stakeCurateSettings.withdrawalPeriod = _withdrawalPeriod;
+    stakeCurateSettings.challengeWindow = _challengeWindow;
+    stakeCurateSettings.governor = _governor;
     emit ChangedStakeCurateSettings(_withdrawalPeriod, _challengeWindow, _governor);
-    currentMetaEvidenceId++;
-    emit MetaEvidence(currentMetaEvidenceId, _metaEvidence);
+    stakeCurateSettings.currentMetaEvidenceId++;
+    emit MetaEvidence(stakeCurateSettings.currentMetaEvidenceId, _metaEvidence);
   }
 
   /// @dev Creates an account and starts it with funds dependent on value
@@ -246,7 +254,10 @@ contract StakeCurate is IArbitrable, IEvidence {
       require(account.owner == msg.sender, "Only account owner can invoke account");
       uint32 timestamp = account.withdrawingTimestamp;
       require(timestamp != 0, "Withdrawal didn't start");
-      require(timestamp + withdrawalPeriod <= block.timestamp, "Withdraw period didn't pass");
+      require(
+        timestamp + stakeCurateSettings.withdrawalPeriod <= block.timestamp,
+        "Withdraw period didn't pass"
+      );
       uint256 fullStake = Cint32.decompress(account.fullStake);
       uint256 lockedStake = Cint32.decompress(account.lockedStake);
       uint256 freeStake = fullStake - lockedStake; // we needed to decompress fullstake anyway
@@ -521,7 +532,10 @@ contract StakeCurate is IArbitrable, IEvidence {
   ) external payable {
     // this function does many things and stack goes too deep
     // that's why many things have to be figured out dynamically
-    require(_editionTimestamp + challengeWindow >= block.timestamp, "Too late to challenge that edition");
+    require(
+      _editionTimestamp + stakeCurateSettings.challengeWindow >= block.timestamp,
+      "Too late to challenge that edition"
+    );
     Item storage item = items[_itemSlot];
     List memory list = lists[item.listId];
 
@@ -586,7 +600,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ItemChallenged(_itemSlot, disputeSlot, _editionTimestamp, _reason);
     // ERC 1497
     uint256 evidenceGroupId = getEvidenceGroupId(_itemSlot);
-    emit Dispute(arbSetting.arbitrator, arbitratorDisputeId, currentMetaEvidenceId, evidenceGroupId);
+    emit Dispute(
+      arbSetting.arbitrator, arbitratorDisputeId,
+      stakeCurateSettings.currentMetaEvidenceId, evidenceGroupId
+    );
     emit Evidence(arbSetting.arbitrator, evidenceGroupId, msg.sender, _reason);
   }
 
