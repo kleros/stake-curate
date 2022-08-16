@@ -75,11 +75,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint56 accountId;
     uint56 listId;
     uint32 removingTimestamp; // frontrunning protection
-    bool removing; // on failed dispute, will automatically reset removingTimestamp
     ItemSlotState slotState;
     uint32 submissionBlock; // only used to make evidenceGroupId.
     uint32 commitTimestamp;
-    uint32 freeSpace;
+    uint40 freeSpace;
     bytes harddata;
   }
 
@@ -394,7 +393,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.accountId = _accountId;
     item.listId = _listId;
     item.removingTimestamp = 0;
-    item.removing = false;
     // (not sure) in arbitrum, this is actually the L1 block number
     // which means, collisions in the L2 might be possible, so
     // this doesn't guarantee identity. when moving to arbitrum,
@@ -415,7 +413,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(!item.removing, "Item is being removed");
+    require(item.removingTimestamp == 0, "Item is being removed");
     require(item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
     uint256 freeStake = getFreeStake(account);
     List memory list = lists[item.listId];
@@ -435,11 +433,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[_itemSlot];
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(!item.removing, "Item is already being removed");
+    require(item.removingTimestamp == 0, "Item is already being removed");
     require(item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
 
     item.removingTimestamp = uint32(block.timestamp);
-    item.removing = true;
     emit ItemStartRemoval(_itemSlot);
   }
 
@@ -453,9 +450,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     List memory list = lists[item.listId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
     require(!itemIsFree(item, list), "ItemSlot must not be free"); // You can cancel removal while Disputed
-    require(item.removing, "Item is not being removed");
+    require(item.removingTimestamp != 0, "Item is not being removed");
     item.removingTimestamp = 0;
-    item.removing = false;
     emit ItemStopRemoval(_itemSlot);
   }
 
@@ -481,7 +477,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(Cint32.decompress(list.requiredStake) <= freeStake, "Cannot afford adopting this item");
 
     item.accountId = _adopterId;
-    item.removing = false;
     item.removingTimestamp = 0;
     item.commitTimestamp = uint32(block.timestamp);
 
@@ -499,7 +494,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     List memory list = lists[item.listId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
     require(!itemIsFree(item, list) && item.slotState == ItemSlotState.Used, "ItemSlot must be Used");
-    require(!item.removing, "Item is being removed");
+    require(item.removingTimestamp == 0, "Item is being removed");
     
     uint256 freeStake = getFreeStake((account));
     require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough to recommit item");
@@ -657,7 +652,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     if (_ruling == 1 || _ruling == 0) {
       // staker won.
       // 4a. return item to used, not disputed.
-      if (item.removing) {
+      if (item.removingTimestamp != 0) {
         item.removingTimestamp = uint32(block.timestamp);
       }
       item.slotState = ItemSlotState.Used;
@@ -709,7 +704,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   function itemIsFree(Item memory _item, List memory _list) internal view returns (bool) {
     unchecked {
       bool notInUse = _item.slotState == ItemSlotState.Free;
-      bool removed = _item.removing && _item.removingTimestamp + _list.removalPeriod <= block.timestamp;
+      bool removed = (_item.removingTimestamp + _list.removalPeriod) <= block.timestamp;
       return (notInUse || removed);
     }
   }
@@ -733,7 +728,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   function itemIsInAdoption(Item memory _item, List memory _list, Account memory _account) internal view returns (bool) {
     // check if any of the 5 conditions for adoption is met:
-    bool beingRemoved = _item.removing;
+    bool beingRemoved = _item.removingTimestamp != 0;
     bool accountWithdrawing = _account.withdrawingTimestamp != 0;
     bool noCommitAfterListUpdate = _item.commitTimestamp <= _list.versionTimestamp
       && block.timestamp >= _list.versionTimestamp + _list.upgradePeriod;
