@@ -152,9 +152,17 @@ contract StakeCurate is IArbitrable, IEvidence {
     withdrawalPeriod = _withdrawalPeriod;
     challengeWindow = _challengeWindow;
     governor = _governor;
+    // purpose: prevent dispute zero from being used.
+    // this dispute has the ArbitrationSetting = 0. it will be
+    // made impossible to rule with, and kept with arbitrator = address(0) forever,
+    // so, it cannot be ruled. thus, requiring the disputeSlot != 0 on rule is not needed.
+    arbitrationSettingCount = 1;
+    disputes[0].state = DisputeState.Used;
+
     emit StakeCurateCreated();
     emit ChangedStakeCurateSettings(_withdrawalPeriod, _challengeWindow, _governor);
     emit MetaEvidence(0, _metaEvidence);
+    emit ArbitrationSettingCreated(address(0), "");
   }
 
   // ----- PUBLIC FUNCTIONS -----
@@ -550,6 +558,9 @@ contract StakeCurate is IArbitrable, IEvidence {
         value: arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData)}(
         RULING_OPTIONS, arbSetting.arbitratorExtraData
       );
+    require(arbitratorAndDisputeIdToDisputeSlot
+      [address(arbSetting.arbitrator)][arbitratorDisputeId] == 0, "disputeId already in use");
+
     arbitratorAndDisputeIdToDisputeSlot
       [address(arbSetting.arbitrator)][arbitratorDisputeId] = disputeSlot;
 
@@ -607,15 +618,22 @@ contract StakeCurate is IArbitrable, IEvidence {
    */
   function rule(uint256 _disputeId, uint256 _ruling) external override {
     // 1. get slot from dispute
-    uint56 disputeSlot = arbitratorAndDisputeIdToDisputeSlot[msg.sender][_disputeId];
-    DisputeSlot storage dispute = disputes[disputeSlot];
+    DisputeSlot storage dispute =
+      disputes[arbitratorAndDisputeIdToDisputeSlot[msg.sender][_disputeId]];
     ArbitrationSetting storage arbSetting = arbitrationSettings[dispute.arbitrationSetting];
     require(msg.sender == address(arbSetting.arbitrator), "Only arbitrator can rule");
+    // require above removes the need to require disputeSlot != 0.
+    // because disputes[0] has arbitrationSettings[0] which has arbitrator == address(0)
+   
+    // 2. refunds gas. having reached this step means
+    // dispute.state == DisputeState.Used
+    // deleting the mapping makes the arbitrator unable to recall
+    // this function*
+    // * bad arbitrator can rule this, and then reuse the disputeId.
+    arbitratorAndDisputeIdToDisputeSlot[msg.sender][_disputeId] = 0;
 
     Item storage item = items[dispute.itemSlot];
     Account storage account = accounts[item.accountId];
-    // 2. make sure that dispute has an ongoing dispute
-    require(dispute.state == DisputeState.Used, "Can only be executed if Used");
     // 3. apply ruling. what to do when refuse to arbitrate?
     // just default towards keeping the item.
     // 0 refuse, 1 staker, 2 challenger.
