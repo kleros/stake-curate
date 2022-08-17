@@ -25,8 +25,30 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used }
-  /// @dev Item may be free even if "Used"! Use itemIsFree view. (because of retractionTimestamp)
-  enum ItemState { Free, Used, Disputed }
+
+  /**
+   * @dev "+" means the state can be stored. Else, is dynamic. Meanings:
+   * +Nothing: does not exist yet.
+   * Young: item is not considered included, but can be challenged.
+   * +Included: the item is considered included, can be challenged.
+   * +Disputed: currently under a Dispute.
+   * +Removed: a Dispute ruled to remove this item.
+   * Uncollateralized: owner doesn't have enough collateral,
+   * * also triggers if owner can withdraw.
+   * Retracting: owner is currently retracting the item.
+   * * can still be challenged.
+   * Retracted: owner made it go through the retraction period.
+   */
+  enum ItemState {
+    Nothing,
+    Young,
+    Included,
+    Disputed,
+    Removed,
+    Uncollateralized,
+    Retracting,
+    Retracted
+  }
 
   uint256 internal constant RULING_OPTIONS = 2;
 
@@ -385,7 +407,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint256 freeStake = getFreeStake(account);
     require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough free stake");
     // Item can be submitted
-    item.state = ItemState.Used;
+    item.state = ItemState.Included;
     item.accountId = _accountId;
     item.listId = _listId;
     item.retractionTimestamp = 0;
@@ -404,7 +426,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
     require(item.retractionTimestamp == 0, "Item is being removed");
-    require(item.state == ItemState.Used, "ItemSlot must be Used");
+    require(item.state == ItemState.Included, "Item must be Included");
     uint256 freeStake = getFreeStake(account);
     List memory list = lists[item.listId];
     require(freeStake >= Cint32.decompress(list.requiredStake), "Cannot afford to edit this item");
@@ -424,7 +446,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
     require(item.retractionTimestamp == 0, "Item is already being retracted");
-    require(item.state == ItemState.Used, "ItemSlot must be Used");
+    require(item.state == ItemState.Included, "Item must be Included");
 
     item.retractionTimestamp = uint32(block.timestamp);
     emit ItemStartRetraction(_itemId);
@@ -439,7 +461,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Account memory account = accounts[item.accountId];
     List memory list = lists[item.listId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(!itemIsFree(item, list), "ItemSlot must not be free"); // You can cancel retraction while Disputed
+    require(!itemIsFree(item, list), "Item must not be free"); // You can cancel retraction while Disputed
     require(item.retractionTimestamp != 0, "Item is not being retracted");
     item.retractionTimestamp = 0;
     emit ItemStopRetraction(_itemId);
@@ -461,7 +483,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     List memory list = lists[item.listId];
 
     require(adopter.owner == msg.sender, "Only adopter owner can adopt");
-    require(item.state == ItemState.Used, "Item slot must be Used");
+    // todo ?? require(item.state == ItemState.Used, "Item slot must be Used");
     require(itemIsInAdoption(item, list, account), "Item is not in adoption");
     uint256 freeStake = getFreeStake(adopter);
     require(Cint32.decompress(list.requiredStake) <= freeStake, "Cannot afford adopting this item");
@@ -483,7 +505,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Account memory account = accounts[item.accountId];
     List memory list = lists[item.listId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(!itemIsFree(item, list) && item.state == ItemState.Used, "ItemSlot must be Used");
+    require(!itemIsFree(item, list) && item.state == ItemState.Included, "Item must be Included");
     require(item.retractionTimestamp == 0, "Item is being retracted");
     
     uint256 freeStake = getFreeStake((account));
@@ -642,7 +664,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       if (item.retractionTimestamp != 0) {
         item.retractionTimestamp = uint32(block.timestamp);
       }
-      item.state = ItemState.Used;
+      item.state = ItemState.Included;
       // free the locked stake
       uint256 lockedAmount = Cint32.decompress(account.lockedStake);
       unchecked {
@@ -653,8 +675,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       payable(account.owner).send(Cint32.decompress(dispute.challengerStake));
     } else {
       // challenger won.
-      // 4b. slot is now Free
-      item.state = ItemState.Free;
+      // 4b. slot is now Removed
+      item.state = ItemState.Removed;
       // now, award the dispute stake to challenger
       uint256 amount = Cint32.decompress(dispute.itemStake) + Cint32.decompress(dispute.challengerStake);
       // remove amount from the account
@@ -676,21 +698,63 @@ contract StakeCurate is IArbitrable, IEvidence {
     return i;
   }
 
+  function getItemState(uint64 _itemId) public view returns (ItemState) {
+    Item memory item = items[_itemId];
+    List memory list = lists[item.listId];
+    if (
+        item.state == ItemState.Removed
+        || item.state == ItemState.Disputed
+        || item.state == ItemState.Nothing
+    ) {
+      // these states are returned as they are.
+      return (item.state);
+    } else if (
+        // gone fully through retraction
+        item.retractionTimestamp != 0
+        && item.retractionTimestamp + list.retractionPeriod <= block.timestamp
+    ) {
+      return (ItemState.Retracted);
+    } else if (
+        // not held by the required stake
+        (
+          accounts[item.accountId].withdrawingTimestamp != 0
+          && accounts[item.accountId].withdrawingTimestamp
+            + stakeCurateSettings.withdrawalPeriod <= block.timestamp
+        )
+        || getFreeStake(accounts[item.accountId]) < Cint32.decompress(list.requiredStake)
+    ) {
+      return (ItemState.Uncollateralized);
+    } else if (item.retractionTimestamp != 0) {
+      return (ItemState.Retracting);
+    } else //if (
+        // todo check account balances
+        // to figure out the latest moment in which collateralization was interrupted
+        // todo add ageForInclusion
+        // item.commitTimestamp + list.ageForInclusion < block.timestamp
+        // returns Young
+    //)
+    {
+      return (ItemState.Included);
+    }
+  }
+
+  // todo / remove
   function itemIsFree(Item memory _item, List memory _list) internal view returns (bool) {
     unchecked {
-      bool notInUse = _item.state == ItemState.Free;
+      bool notInUse = _item.state == ItemState.Removed;
       bool retracted = (_item.retractionTimestamp + _list.retractionPeriod) <= block.timestamp;
       return (notInUse || retracted);
     }
   }
 
+  // todo / remove
   function itemCanBeChallenged(Item memory _item, List memory _list) internal view returns (bool) {
     bool free = itemIsFree(_item, _list);
 
     return (
       !free
       && (_item.commitTimestamp > _list.versionTimestamp)
-      && _item.state == ItemState.Used
+      && _item.state == ItemState.Included
     );
   }
 
