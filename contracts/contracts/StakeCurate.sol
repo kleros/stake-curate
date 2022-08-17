@@ -35,6 +35,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * +Removed: a Dispute ruled to remove this item.
    * Uncollateralized: owner doesn't have enough collateral,
    * * also triggers if owner can withdraw.
+   * Outdated: item was committed before the last list version.
    * Retracting: owner is currently retracting the item.
    * * can still be challenged.
    * Retracted: owner made it go through the retraction period.
@@ -46,6 +47,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Disputed,
     Removed,
     Uncollateralized,
+    Outdated,
     Retracting,
     Retracted
   }
@@ -724,6 +726,8 @@ contract StakeCurate is IArbitrable, IEvidence {
         || getFreeStake(accounts[item.accountId]) < Cint32.decompress(list.requiredStake)
     ) {
       return (ItemState.Uncollateralized);
+    } else if (item.commitTimestamp <= list.versionTimestamp) {
+      return (ItemState.Outdated);
     } else if (item.retractionTimestamp != 0) {
       return (ItemState.Retracting);
     } else //if (
