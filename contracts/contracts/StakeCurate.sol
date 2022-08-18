@@ -218,21 +218,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit MetaEvidence(stakeCurateSettings.currentMetaEvidenceId, _metaEvidence);
   }
 
-  /// @dev Creates an account and starts it with funds dependent on value
-  function createAccount() external payable {
-    Account storage account = accounts[accountCount];
-    unchecked {accountCount++;}
-    account.owner = msg.sender;
-    uint32 fullStake = Cint32.compress(msg.value);
-    account.fullStake = fullStake;
-    emit AccountCreated(msg.sender, fullStake);
-  }
-
   /**
    * @dev Creates an account for a given address and starts it with funds dependent on value.
    * @param _owner The address of the account you will create.
    */
-  function createAccountForAddress(address _owner) external payable {
+  function createAccount(address _owner) external payable {
     Account storage account = accounts[accountCount];
     unchecked {accountCount++;}
     account.owner = _owner;
