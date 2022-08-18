@@ -222,9 +222,9 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @dev Creates an account for a given address and starts it with funds dependent on value.
    * @param _owner The address of the account you will create.
    */
-  function createAccount(address _owner) external payable {
-    Account storage account = accounts[accountCount];
-    unchecked {accountCount++;}
+  function createAccount(address _owner) external payable returns (uint64 id) {
+    unchecked {id = accountCount++;}
+    Account storage account = accounts[id];
     account.owner = _owner;
     uint32 fullStake = Cint32.compress(msg.value);
     account.fullStake = fullStake;
@@ -290,9 +290,11 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _arbitrator The address of the IArbitrator
    * @param _arbitratorExtraData The extra data
    */
-  function createArbitrationSetting(address _arbitrator, bytes calldata _arbitratorExtraData) external {
+  function createArbitrationSetting(address _arbitrator, bytes calldata _arbitratorExtraData)
+      external returns (uint64 id) {
+    unchecked {id = arbitrationSettingCount++;}
     require(_arbitrator != address(0), "Address 0 can't be arbitrator");
-    arbitrationSettings[arbitrationSettingCount++] = ArbitrationSetting({
+    arbitrationSettings[id] = ArbitrationSetting({
       arbitrator: IArbitrator(_arbitrator),
       arbitratorExtraData: _arbitratorExtraData
     });
@@ -321,12 +323,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _ageForInclusion,
     uint64 _arbitrationSettingId,
     string calldata _metalist
-  ) external {
+  ) external returns (uint64 id) {
     require(_governorId < accountCount, "Account must exist");
     require(_arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
-    uint64 listId = listCount;
-    unchecked {listCount++;}
-    List storage list = lists[listId];
+    unchecked {id = arbitrationSettingCount++;}
+    List storage list = lists[id];
     list.governorId = _governorId;
     list.requiredStake = _requiredStake;
     list.retractionPeriod = _retractionPeriod;
@@ -400,11 +401,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 _accountId,
     string calldata _ipfsUri,
     bytes calldata _harddata
-  ) external returns (uint64 itemId) {
+  ) external returns (uint64 id) {
     Account memory account = accounts[_accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    itemId = itemCount++; 
-    Item storage item = items[itemId];
+    unchecked {id = itemCount++;} 
+    Item storage item = items[id];
     List storage list = lists[_listId];
     uint256 freeStake = getFreeStake(account);
     require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough free stake");
@@ -543,7 +544,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _editionTimestamp,
     uint256 _minAmount,
     string calldata _reason
-  ) external payable {
+  ) external payable returns (uint64 disputeSlot) {
     // this function does many things and stack goes too deep
     // that's why many things have to be figured out dynamically
     require(
@@ -578,7 +579,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       ? Cint32.decompress(list.requiredStake)
       : freeStake
     ;
-    uint64 disputeSlot = firstFreeDisputeSlot(_fromDisputeSlot);
+    disputeSlot = firstFreeDisputeSlot(_fromDisputeSlot);
 
     // create dispute
     uint256 arbitratorDisputeId =
