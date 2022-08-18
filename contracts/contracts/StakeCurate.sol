@@ -90,6 +90,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     bool freeAdoptions; // all items are in adoption all the time
     uint8 challengerStakeRatio; // challengerStake: list.requiredStake * ratio / 16
     // so it will be a multiplier between [0, 16]
+    uint32 ageForInclusion; // how much time from Young to Included, in seconds
   }
 
   struct Item {
@@ -135,10 +136,11 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   event ListCreated(uint64 _governorId, uint32 _requiredStake, uint32 _removalPeriod,
     uint32 _upgradePeriod, bool _freeAdoptions, uint8 _challengerStakeRatio,
-    uint64 _arbitrationSettingId, string _metalist);
+    uint32 _ageForInclusion, uint64 _arbitrationSettingId, string _metalist);
   event ListUpdated(uint64 _listId, uint64 _governorId, uint32 _requiredStake,
     uint32 _removalPeriod, uint32 _upgradePeriod, bool _freeAdoptions,
-    uint8 _challengerStakeRatio, uint64 _arbitrationSettingId, string _metalist);
+    uint8 _challengerStakeRatio, uint32 _ageForInclusion,
+    uint64 _arbitrationSettingId, string _metalist);
 
   event ItemAdded(uint64 _listId, uint64 _accountId, string _ipfsUri,
     bytes _harddata
@@ -314,8 +316,9 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
    * @param _freeAdoptions Whether if the items in this list are in adoption all the time.
    * @param _challengerStakeRatio Expresses the amount of stake the challenger needs to put in.
-   * @param _arbitrationSettingId Id of the internally stored arbitrator setting
-   * @param _metalist IPFS uri of metaEvidence
+   * @param _ageForInclusion Seconds needed to be considered canonically included.
+   * @param _arbitrationSettingId Id of the internally stored arbitrator setting.
+   * @param _metalist IPFS uri of metaEvidence.
    */
   function createList(
     uint64 _governorId,
@@ -324,6 +327,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _upgradePeriod,
     bool _freeAdoptions,
     uint8 _challengerStakeRatio,
+    uint32 _ageForInclusion,
     uint64 _arbitrationSettingId,
     string calldata _metalist
   ) external {
@@ -338,11 +342,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.upgradePeriod = _upgradePeriod;
     list.freeAdoptions = _freeAdoptions;
     list.challengerStakeRatio = _challengerStakeRatio;
+    list.ageForInclusion = _ageForInclusion;
     list.arbitrationSettingId = _arbitrationSettingId;
     list.versionTimestamp = uint32(block.timestamp);
     emit ListCreated(
       _governorId, _requiredStake, _retractionPeriod,
-      _upgradePeriod, _freeAdoptions, _challengerStakeRatio, _arbitrationSettingId, _metalist
+      _upgradePeriod, _freeAdoptions, _challengerStakeRatio,
+      _ageForInclusion, _arbitrationSettingId, _metalist
     );
   }
 
@@ -355,6 +361,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
    * @param _freeAdoptions Whether if the items in this list are in adoption all the time.
    * @param _challengerStakeRatio Expresses the amount of stake the challenger needs to put in.
+   * @param _ageForInclusion Seconds needed to be considered canonically included.
    * @param _arbitrationSettingId Id of the new arbitrator extra data.
    * @param _metalist IPFS uri of the metadata of this list.
    */
@@ -366,6 +373,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _upgradePeriod,
     bool _freeAdoptions,
     uint8 _challengerStakeRatio,
+    uint32 _ageForInclusion,
     uint64 _arbitrationSettingId,
     string calldata _metalist
   ) external {
@@ -379,12 +387,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.upgradePeriod = _upgradePeriod;
     list.freeAdoptions = _freeAdoptions;
     list.challengerStakeRatio = _challengerStakeRatio;
+    list.ageForInclusion = _ageForInclusion;
     list.arbitrationSettingId = _arbitrationSettingId;
     list.versionTimestamp = uint32(block.timestamp);
     emit ListUpdated(
       _listId, _governorId, _requiredStake,
       _retractionPeriod, _upgradePeriod, _freeAdoptions, _challengerStakeRatio,
-      _arbitrationSettingId, _metalist
+      _ageForInclusion, _arbitrationSettingId, _metalist
     );
   }
 
@@ -419,6 +428,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ItemAdded(_listId, _accountId, _ipfsUri, _harddata);
   }
 
+  // todo redo this function
+  // will be refactored into attempting to adopt / revive if not owned.
   function editItem(
     uint64 _itemId,
     string calldata _ipfsUri,
@@ -461,10 +472,8 @@ contract StakeCurate is IArbitrable, IEvidence {
   function cancelRetractItem(uint64 _itemId) external {
     Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
-    List memory list = lists[item.listId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(!itemIsFree(item, list), "Item must not be free"); // You can cancel retraction while Disputed
-    require(item.retractionTimestamp != 0, "Item is not being retracted");
+    require(getItemState(_itemId) == ItemState.Retracting, "Item is not being retracted");
     item.retractionTimestamp = 0;
     emit ItemStopRetraction(_itemId);
   }
@@ -478,6 +487,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _itemId Item to adopt.
    * @param _adopterId Id of an account belonging to adopter, that will be new owner.
    */
+  // todo remove. this function will stop being maintained.
   function adoptItem(uint64 _itemId, uint64 _adopterId) external {
     Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
@@ -502,12 +512,16 @@ contract StakeCurate is IArbitrable, IEvidence {
    * item submitters. Items have to opt in to the new list version.
    * @param _itemId Item to recommit.
    */
+  // todo redo this function. instead of just updating, it should act as the goto function for:
+  // adopting
+  // reviving an item (because they can be Removed, Retracted, etc...)
+  // the previous "update commit timestamp" usage for list versions.
+  // function currently broken.
   function recommitItem(uint64 _itemId) external {
     Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
     List memory list = lists[item.listId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(!itemIsFree(item, list) && item.state == ItemState.Included, "Item must be Included");
     require(item.retractionTimestamp == 0, "Item is being retracted");
     
     uint256 freeStake = getFreeStake((account));
@@ -730,14 +744,13 @@ contract StakeCurate is IArbitrable, IEvidence {
       return (ItemState.Outdated);
     } else if (item.retractionTimestamp != 0) {
       return (ItemState.Retracting);
-    } else //if (
+    } else if (
         // todo check account balances
         // to figure out the latest moment in which collateralization was interrupted
-        // todo add ageForInclusion
-        // item.commitTimestamp + list.ageForInclusion < block.timestamp
-        // returns Young
-    //)
-    {
+        item.commitTimestamp + list.ageForInclusion < block.timestamp
+    ) {
+      return (ItemState.Young);
+    } else {
       return (ItemState.Included);
     }
   }
