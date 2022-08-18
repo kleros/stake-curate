@@ -301,6 +301,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _arbitratorExtraData The extra data
    */
   function createArbitrationSetting(address _arbitrator, bytes calldata _arbitratorExtraData) external {
+    require(_arbitrator != address(0), "Address 0 can't be arbitrator");
     arbitrationSettings[arbitrationSettingCount++] = ArbitrationSetting({
       arbitrator: IArbitrator(_arbitrator),
       arbitratorExtraData: _arbitratorExtraData
