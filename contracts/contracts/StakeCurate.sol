@@ -529,12 +529,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _challengerId Id of the account challenger is challenging on behalf
    * @param _itemId Item to challenge.
    * @param _fromDisputeSlot DisputeSlot to start finding a place to store the dispute
-   * @param _editionTimestamp The challenge is made upon the edition available at this timestamp. 
-   * @param _minAmount Frontrunning protection due to this edge case:
-   * Submitter frontruns submitting a wrong item, and challenges himself to lock himself out of
-   * funds, so that his free stake is lower than whatever he has committed or is the requirement
-   * of the list. This way, challenger can verify that a desirable amount of funds will be obtained
-   * by challenging, with his transaction reverting otherwise, protecting from loss. 
+   * @param _editionTimestamp The challenge is made upon the edition available at this timestamp.
    * @param _reason IPFS uri containing the evidence for the challenge.
    */
   function challengeItem(
@@ -542,7 +537,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 _itemId,
     uint64 _fromDisputeSlot,
     uint32 _editionTimestamp,
-    uint256 _minAmount,
     string calldata _reason
   ) external payable returns (uint64 disputeSlot) {
     // this function does many things and stack goes too deep
@@ -552,6 +546,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       "Too late to challenge that edition"
     );
     Item storage item = items[_itemId];
+    Account storage account = accounts[item.accountId];
     List memory list = lists[item.listId];
 
     // editions of outdated versions are unincluded and thus cannot be challenged
@@ -568,17 +563,18 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     // this validation is not needed for security, since the challenger is only
     // referenced to forward the reward if challenge is won. but, it's nicer.
+    // todo remove when 1:1 address account
     require(accounts[_challengerId].owner == msg.sender, "Only account owner can challenge on behalf");
     
-    require(itemCanBeChallenged(item, list), "Item cannot be challenged");
-    uint256 freeStake = getFreeStake(accounts[item.accountId]);
-    require(_minAmount <= freeStake, "Not enough free stake to satisfy minAmount");
+    // Item can be challenged if: Young, Included, Retracting
+    ItemState dynamicState = getItemState(_itemId);
+    require(
+      dynamicState == ItemState.Young
+      || dynamicState == ItemState.Included
+      || dynamicState == ItemState.Retracting
+    , "Item cannot be challenged");
 
     // All requirements met, begin
-    uint256 committedAmount = Cint32.decompress(list.requiredStake) <= freeStake
-      ? Cint32.decompress(list.requiredStake)
-      : freeStake
-    ;
     disputeSlot = firstFreeDisputeSlot(_fromDisputeSlot);
 
     // create dispute
@@ -595,17 +591,17 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     item.state = ItemState.Disputed;
 
-    unchecked {
-      accounts[item.accountId].lockedStake =
-        Cint32.compress(Cint32.decompress(accounts[item.accountId].lockedStake) + committedAmount);
-    }
+    account.lockedStake =
+        Cint32.compress(Cint32.decompress(account.lockedStake)
+        + Cint32.decompress(list.requiredStake));
+
     disputes[disputeSlot] = DisputeSlot({
       arbitratorDisputeId: arbitratorDisputeId,
       itemId: _itemId,
       challengerId: _challengerId,
       arbitrationSetting: list.arbitrationSettingId,
       state: DisputeState.Used,
-      itemStake: Cint32.compress(committedAmount),
+      itemStake: list.requiredStake,
       challengerStake: Cint32.compress(getchallengerStake(list)),
       freespace: 0
     });
@@ -791,6 +787,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     }
   }
 
+  // todo remove in favor of hardcoding challengerStake in list
   function getchallengerStake(List memory _list) internal pure returns (uint256) {
     // each increase in challengerStakeRatio makes challenger put 1/16 itemStaks more.
     // it could be zero, in which case, challenger puts no stake.
