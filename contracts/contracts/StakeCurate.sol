@@ -131,13 +131,8 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
 
-  event ListCreated(uint64 _governorId, uint32 _requiredStake, uint32 _removalPeriod,
-    uint32 _upgradePeriod, bool _freeAdoptions, uint32 _challengerStake,
-    uint32 _ageForInclusion, uint64 _arbitrationSettingId, string _metalist);
-  event ListUpdated(uint64 _listId, uint64 _governorId, uint32 _requiredStake,
-    uint32 _removalPeriod, uint32 _upgradePeriod, bool _freeAdoptions,
-    uint32 _challengerStake, uint32 _ageForInclusion,
-    uint64 _arbitrationSettingId, string _metalist);
+  event ListCreated(List _list, string _metalist);
+  event ListUpdated(uint64 _listId, List _list, string _metalist);
 
   event ItemAdded(uint64 _listId, uint64 _accountId, string _ipfsUri,
     bytes _harddata
@@ -300,90 +295,40 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @dev Creates a list. They store all settings related to the dispute, stake, etc.
-   * @param _governorId The id of the governor.
-   * @param _requiredStake The Cint32 version of the required stake per item.
-   * @param _retractionPeriod The amount of seconds an item needs to go through retraction period to be removed.
-   * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
-   * @param _freeAdoptions Whether if the items in this list are in adoption all the time.
-   * @param _challengerStake Amount of stake the challenger needs to put in.
-   * @param _ageForInclusion Seconds needed to be considered canonically included.
-   * @param _arbitrationSettingId Id of the internally stored arbitrator setting.
-   * @param _metalist IPFS uri of metaEvidence.
+   * @param _list The list to create.
+   * @param _metalist IPFS uri with additional data pertaining to the list.
    */
   function createList(
-    uint64 _governorId,
-    uint32 _requiredStake,
-    uint32 _retractionPeriod,
-    uint32 _upgradePeriod,
-    bool _freeAdoptions,
-    uint32 _challengerStake,
-    uint32 _ageForInclusion,
-    uint64 _arbitrationSettingId,
-    string calldata _metalist
+      List memory _list,
+      string calldata _metalist
   ) external returns (uint64 id) {
-    require(_governorId < accountCount, "Account must exist");
-    require(_arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
-    unchecked {id = arbitrationSettingCount++;}
-    List storage list = lists[id];
-    list.governorId = _governorId;
-    list.requiredStake = _requiredStake;
-    list.retractionPeriod = _retractionPeriod;
-    list.upgradePeriod = _upgradePeriod;
-    list.freeAdoptions = _freeAdoptions;
-    list.challengerStake = _challengerStake;
-    list.ageForInclusion = _ageForInclusion;
-    list.arbitrationSettingId = _arbitrationSettingId;
-    list.versionTimestamp = uint32(block.timestamp);
-    emit ListCreated(
-      _governorId, _requiredStake, _retractionPeriod,
-      _upgradePeriod, _freeAdoptions, _challengerStake,
-      _ageForInclusion, _arbitrationSettingId, _metalist
-    );
+    // todo also pass governor as address, and override passed governorId.
+    // try to create if it doesn't exist with "accountRoutine"
+    require(_list.arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
+    // todo verify challengerStake is minimum or more (compared to requiredStake)
+    unchecked {id = listCount++;}
+    lists[id] = _list;
+    emit ListCreated(_list, _metalist);
   }
 
   /**
    * @dev Updates an existing list. Can only be called by its governor.
    * @param _listId Id of the list to be updated.
-   * @param _governorId Id of the new governor.
-   * @param _requiredStake Cint32 version of the new required stake per item.
-   * @param _retractionPeriod Seconds until item is considered retraction after starting retraction.
-   * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
-   * @param _freeAdoptions Whether if the items in this list are in adoption all the time.
-   * @param _challengerStake Amount of stake the challenger needs to put in.
-   * @param _ageForInclusion Seconds needed to be considered canonically included.
-   * @param _arbitrationSettingId Id of the new arbitrator extra data.
-   * @param _metalist IPFS uri of the metadata of this list.
+   * @param _list New list data to replace current one.
+   * @param _metalist IPFS uri with additional data pertaining to the list.
    */
   function updateList(
     uint64 _listId,
-    uint64 _governorId,
-    uint32 _requiredStake,
-    uint32 _retractionPeriod,
-    uint32 _upgradePeriod,
-    bool _freeAdoptions,
-    uint32 _challengerStake,
-    uint32 _ageForInclusion,
-    uint64 _arbitrationSettingId,
+    List memory _list,
     string calldata _metalist
   ) external {
-    require(_governorId < accountCount, "Account must exist");
-    require(_arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
-    List storage list = lists[_listId];
-    require(accounts[list.governorId].owner == msg.sender, "Only governor can update list");
-    list.governorId = _governorId;
-    list.requiredStake = _requiredStake;
-    list.retractionPeriod = _retractionPeriod;
-    list.upgradePeriod = _upgradePeriod;
-    list.freeAdoptions = _freeAdoptions;
-    list.challengerStake = _challengerStake;
-    list.ageForInclusion = _ageForInclusion;
-    list.arbitrationSettingId = _arbitrationSettingId;
-    list.versionTimestamp = uint32(block.timestamp);
-    emit ListUpdated(
-      _listId, _governorId, _requiredStake,
-      _retractionPeriod, _upgradePeriod, _freeAdoptions, _challengerStake,
-      _ageForInclusion, _arbitrationSettingId, _metalist
-    );
+    // todo also pass governor as address, and override passed governorId.
+    // try to create if it doesn't exist with "accountRoutine"
+    require(_list.arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
+    require(accounts[lists[_listId].governorId].owner == msg.sender, "Only governor can update list");
+    // todo verify challengerStake is minimum or more (compared to requiredStake)
+    lists[_listId] = _list;
+    emit ListUpdated(_listId, _list, _metalist);
   }
 
   /**
