@@ -145,7 +145,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ItemRecommitted(uint64 _itemId);
   event ItemAdopted(uint64 _itemId, uint64 _adopterId);
 
-  event ItemChallenged(uint64 _itemId, uint64 _disputeSlot, uint32 _editionTimestamp, string _reason);
+  event ItemChallenged(uint64 _itemId, uint32 _editionTimestamp, string _reason);
 
   // ----- CONTRACT STORAGE -----
   
@@ -154,6 +154,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   // todo get these counts in a single struct?
   uint64 public itemCount;
   uint64 public listCount;
+  uint64 public disputeCount;
   uint64 public accountCount;
   uint64 public arbitrationSettingCount;
 
@@ -161,7 +162,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   mapping(uint64 => List) public lists;
   mapping(uint64 => Item) public items;
   mapping(uint64 => DisputeSlot) public disputes;
-  mapping(address => mapping(uint256 => uint64)) public arbitratorAndDisputeIdToDisputeSlot;
+  mapping(address => mapping(uint256 => uint64)) public arbitratorAndDisputeIdToLocal;
   mapping(uint64 => ArbitrationSetting) public arbitrationSettings;
 
   /** 
@@ -182,6 +183,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // so, it cannot be ruled. thus, requiring the disputeSlot != 0 on rule is not needed.
     arbitrationSettingCount = 1;
     disputes[0].state = DisputeState.Used;
+    disputeCount = 1; // since disputes are incremental, prevent local dispute 0
 
     emit StakeCurateCreated();
     emit ChangedStakeCurateSettings(_withdrawalPeriod, _challengeWindow, _governor);
@@ -470,17 +472,15 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @notice Challenge an item, with the intent of removing it and obtaining a reward.
    * @param _challengerId Id of the account challenger is challenging on behalf
    * @param _itemId Item to challenge.
-   * @param _fromDisputeSlot DisputeSlot to start finding a place to store the dispute
    * @param _editionTimestamp The challenge is made upon the edition available at this timestamp.
    * @param _reason IPFS uri containing the evidence for the challenge.
    */
   function challengeItem(
     uint64 _challengerId,
     uint64 _itemId,
-    uint64 _fromDisputeSlot,
     uint32 _editionTimestamp,
     string calldata _reason
-  ) external payable returns (uint64 disputeSlot) {
+  ) external payable returns (uint64 id) {
     // this function does many things and stack goes too deep
     // that's why many things have to be figured out dynamically
     require(
@@ -518,7 +518,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     , "Item cannot be challenged");
 
     // All requirements met, begin
-    disputeSlot = firstFreeDisputeSlot(_fromDisputeSlot);
+    unchecked {id = disputeCount++;}
 
     // create dispute
     uint256 arbitratorDisputeId =
@@ -526,11 +526,11 @@ contract StakeCurate is IArbitrable, IEvidence {
         value: arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData)}(
         RULING_OPTIONS, arbSetting.arbitratorExtraData
       );
-    require(arbitratorAndDisputeIdToDisputeSlot
+    require(arbitratorAndDisputeIdToLocal
       [address(arbSetting.arbitrator)][arbitratorDisputeId] == 0, "disputeId already in use");
 
-    arbitratorAndDisputeIdToDisputeSlot
-      [address(arbSetting.arbitrator)][arbitratorDisputeId] = disputeSlot;
+    arbitratorAndDisputeIdToLocal
+      [address(arbSetting.arbitrator)][arbitratorDisputeId] = id;
 
     item.state = ItemState.Disputed;
 
@@ -538,7 +538,7 @@ contract StakeCurate is IArbitrable, IEvidence {
         Cint32.compress(Cint32.decompress(account.lockedStake)
         + Cint32.decompress(list.requiredStake));
 
-    disputes[disputeSlot] = DisputeSlot({
+    disputes[id] = DisputeSlot({
       arbitratorDisputeId: arbitratorDisputeId,
       itemId: _itemId,
       challengerId: _challengerId,
@@ -549,7 +549,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       freespace: 0
     });
 
-    emit ItemChallenged(_itemId, disputeSlot, _editionTimestamp, _reason);
+    emit ItemChallenged(_itemId, _editionTimestamp, _reason);
     // ERC 1497
     uint256 evidenceGroupId = _itemId;
     emit Dispute(
@@ -578,27 +578,26 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @dev External function for the arbitrator to decide the result of a dispute. TRUSTED
-   * Arbitrator is trusted to:
-   * a. call this only once, after dispute is final.
-   * b. not call this to an unmapped _disputeId (since it would affect disputeSlot 0)
    * @param _disputeId External id of the dispute
    * @param _ruling Ruling of the dispute. If 0 or 1, submitter wins. Else (2) challenger wins
    */
   function rule(uint256 _disputeId, uint256 _ruling) external override {
     // 1. get slot from dispute
+    uint64 localDisputeId = arbitratorAndDisputeIdToLocal[msg.sender][_disputeId];
     DisputeSlot storage dispute =
-      disputes[arbitratorAndDisputeIdToDisputeSlot[msg.sender][_disputeId]];
+      disputes[localDisputeId];
     ArbitrationSetting storage arbSetting = arbitrationSettings[dispute.arbitrationSetting];
     require(msg.sender == address(arbSetting.arbitrator), "Only arbitrator can rule");
     // require above removes the need to require disputeSlot != 0.
     // because disputes[0] has arbitrationSettings[0] which has arbitrator == address(0)
-   
+    // and no one will be able to call from address(0)
+
     // 2. refunds gas. having reached this step means
     // dispute.state == DisputeState.Used
     // deleting the mapping makes the arbitrator unable to recall
     // this function*
     // * bad arbitrator can rule this, and then reuse the disputeId.
-    arbitratorAndDisputeIdToDisputeSlot[msg.sender][_disputeId] = 0;
+    arbitratorAndDisputeIdToLocal[msg.sender][_disputeId] = 0;
 
     Item storage item = items[dispute.itemId];
     Account storage account = accounts[item.accountId];
@@ -632,17 +631,19 @@ contract StakeCurate is IArbitrable, IEvidence {
       // is it dangerous to send before the end of the function? please answer on audit
       payable(accounts[dispute.challengerId].owner).send(amount);
     }
-    dispute.state = DisputeState.Free;
-    emit Ruling(arbSetting.arbitrator, _disputeId, _ruling);
-  }
+    // destroy the disputeSlot information, to trigger refunds
+    disputes[localDisputeId] = DisputeSlot({
+      arbitratorDisputeId: 0,
+      itemId: 0,
+      challengerId: 0,
+      arbitrationSetting: 0,
+      state: DisputeState.Free,
+      itemStake: 0,
+      challengerStake: 0,
+      freespace: 0
+    });
 
-  // ----- VIEW FUNCTIONS -----
-  function firstFreeDisputeSlot(uint64 _fromSlot) internal view returns (uint64) {
-    uint64 i = _fromSlot;
-    while (disputes[i].state != DisputeState.Free) {
-      unchecked {i++;}
-    }
-    return i;
+    emit Ruling(arbSetting.arbitrator, _disputeId, _ruling);
   }
 
   function getItemState(uint64 _itemId) public view returns (ItemState) {
