@@ -84,12 +84,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     // if keep, rename. todo
     uint32 upgradePeriod; // extends time to edit the item without getting adopted. could be uint16 w/ minutes
     // ----
-    // todo rethink this slot. no longer challengerStakeRatio needs this constraint.
-    // plus, another slot to keep track of the erc20 address will be needed later anyway.
-
+    // todo add erc20 token address
     bool freeAdoptions; // all items are in adoption all the time
-    uint8 challengerStakeRatio; // challengerStake: list.requiredStake * ratio / 16
-    // so it will be a multiplier between [0, 16]
+    uint32 challengerStake; // how much challenger puts as stake to be awarded on failure to owner
     uint32 ageForInclusion; // how much time from Young to Included, in seconds
   }
 
@@ -135,11 +132,11 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
 
   event ListCreated(uint64 _governorId, uint32 _requiredStake, uint32 _removalPeriod,
-    uint32 _upgradePeriod, bool _freeAdoptions, uint8 _challengerStakeRatio,
+    uint32 _upgradePeriod, bool _freeAdoptions, uint32 _challengerStake,
     uint32 _ageForInclusion, uint64 _arbitrationSettingId, string _metalist);
   event ListUpdated(uint64 _listId, uint64 _governorId, uint32 _requiredStake,
     uint32 _removalPeriod, uint32 _upgradePeriod, bool _freeAdoptions,
-    uint8 _challengerStakeRatio, uint32 _ageForInclusion,
+    uint32 _challengerStake, uint32 _ageForInclusion,
     uint64 _arbitrationSettingId, string _metalist);
 
   event ItemAdded(uint64 _listId, uint64 _accountId, string _ipfsUri,
@@ -308,7 +305,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _retractionPeriod The amount of seconds an item needs to go through retraction period to be removed.
    * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
    * @param _freeAdoptions Whether if the items in this list are in adoption all the time.
-   * @param _challengerStakeRatio Expresses the amount of stake the challenger needs to put in.
+   * @param _challengerStake Amount of stake the challenger needs to put in.
    * @param _ageForInclusion Seconds needed to be considered canonically included.
    * @param _arbitrationSettingId Id of the internally stored arbitrator setting.
    * @param _metalist IPFS uri of metaEvidence.
@@ -319,7 +316,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _retractionPeriod,
     uint32 _upgradePeriod,
     bool _freeAdoptions,
-    uint8 _challengerStakeRatio,
+    uint32 _challengerStake,
     uint32 _ageForInclusion,
     uint64 _arbitrationSettingId,
     string calldata _metalist
@@ -333,13 +330,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.retractionPeriod = _retractionPeriod;
     list.upgradePeriod = _upgradePeriod;
     list.freeAdoptions = _freeAdoptions;
-    list.challengerStakeRatio = _challengerStakeRatio;
+    list.challengerStake = _challengerStake;
     list.ageForInclusion = _ageForInclusion;
     list.arbitrationSettingId = _arbitrationSettingId;
     list.versionTimestamp = uint32(block.timestamp);
     emit ListCreated(
       _governorId, _requiredStake, _retractionPeriod,
-      _upgradePeriod, _freeAdoptions, _challengerStakeRatio,
+      _upgradePeriod, _freeAdoptions, _challengerStake,
       _ageForInclusion, _arbitrationSettingId, _metalist
     );
   }
@@ -352,7 +349,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _retractionPeriod Seconds until item is considered retraction after starting retraction.
    * @param _upgradePeriod Seconds from last edition the item has to be upgraded before adoptable.
    * @param _freeAdoptions Whether if the items in this list are in adoption all the time.
-   * @param _challengerStakeRatio Expresses the amount of stake the challenger needs to put in.
+   * @param _challengerStake Amount of stake the challenger needs to put in.
    * @param _ageForInclusion Seconds needed to be considered canonically included.
    * @param _arbitrationSettingId Id of the new arbitrator extra data.
    * @param _metalist IPFS uri of the metadata of this list.
@@ -364,7 +361,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _retractionPeriod,
     uint32 _upgradePeriod,
     bool _freeAdoptions,
-    uint8 _challengerStakeRatio,
+    uint32 _challengerStake,
     uint32 _ageForInclusion,
     uint64 _arbitrationSettingId,
     string calldata _metalist
@@ -378,13 +375,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     list.retractionPeriod = _retractionPeriod;
     list.upgradePeriod = _upgradePeriod;
     list.freeAdoptions = _freeAdoptions;
-    list.challengerStakeRatio = _challengerStakeRatio;
+    list.challengerStake = _challengerStake;
     list.ageForInclusion = _ageForInclusion;
     list.arbitrationSettingId = _arbitrationSettingId;
     list.versionTimestamp = uint32(block.timestamp);
     emit ListUpdated(
       _listId, _governorId, _requiredStake,
-      _retractionPeriod, _upgradePeriod, _freeAdoptions, _challengerStakeRatio,
+      _retractionPeriod, _upgradePeriod, _freeAdoptions, _challengerStake,
       _ageForInclusion, _arbitrationSettingId, _metalist
     );
   }
@@ -555,8 +552,9 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
     // challenger must cover challengerStake + arbitrationCost
+    // todo refactor when erc20 stakes, as challengerStake will be expressed in tokens
     require(msg.value >= 
-      getchallengerStake(list)
+      Cint32.decompress(list.challengerStake)
       + arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData),
       "Not covering the full cost"
     );
@@ -602,7 +600,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       arbitrationSetting: list.arbitrationSettingId,
       state: DisputeState.Used,
       itemStake: list.requiredStake,
-      challengerStake: Cint32.compress(getchallengerStake(list)),
+      challengerStake: list.challengerStake,
       freespace: 0
     });
 
@@ -785,12 +783,5 @@ contract StakeCurate is IArbitrable, IEvidence {
     unchecked {
       return (Cint32.decompress(_account.fullStake) - Cint32.decompress(_account.lockedStake));
     }
-  }
-
-  // todo remove in favor of hardcoding challengerStake in list
-  function getchallengerStake(List memory _list) internal pure returns (uint256) {
-    // each increase in challengerStakeRatio makes challenger put 1/16 itemStaks more.
-    // it could be zero, in which case, challenger puts no stake.
-    return Cint32.decompress(_list.requiredStake) * (62_500 * uint256(_list.challengerStakeRatio)) / 1_000_000;
   }
 }
