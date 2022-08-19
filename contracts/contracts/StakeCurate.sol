@@ -686,26 +686,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     }
   }
 
-  // todo / remove
-  function itemIsFree(Item memory _item, List memory _list) internal view returns (bool) {
-    unchecked {
-      bool notInUse = _item.state == ItemState.Removed;
-      bool retracted = (_item.retractionTimestamp + _list.retractionPeriod) <= block.timestamp;
-      return (notInUse || retracted);
-    }
-  }
-
-  // todo / remove
-  function itemCanBeChallenged(Item memory _item, List memory _list) internal view returns (bool) {
-    bool free = itemIsFree(_item, _list);
-
-    return (
-      !free
-      && (_item.commitTimestamp > _list.versionTimestamp)
-      && _item.state == ItemState.Included
-    );
-  }
-
+  // todo redo with getItemState
+  // also make it a public view, with _itemId
   function itemIsInAdoption(Item memory _item, List memory _list, Account memory _account) internal view returns (bool) {
     // check if any of the 5 conditions for adoption is met:
     bool beingRetracted = _item.retractionTimestamp != 0;
