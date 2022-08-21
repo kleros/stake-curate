@@ -158,7 +158,9 @@ contract StakeCurate is IArbitrable, IEvidence {
   uint64 public accountCount;
   uint64 public arbitrationSettingCount;
 
+  mapping(address => uint64) public accountIdOf;
   mapping(uint64 => Account) public accounts;
+
   mapping(uint64 => List) public lists;
   mapping(uint64 => Item) public items;
   mapping(uint64 => DisputeSlot) public disputes;
@@ -184,6 +186,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     arbitrationSettingCount = 1;
     disputes[0].state = DisputeState.Used;
     disputeCount = 1; // since disputes are incremental, prevent local dispute 0
+    accountCount = 1; // accounts[0] cannot be used either
 
     emit StakeCurateCreated();
     emit ChangedStakeCurateSettings(_withdrawalPeriod, _challengeWindow, _governor);
@@ -213,22 +216,30 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   /**
-   * @dev Creates an account for a given address and starts it with funds dependent on value.
-   * @param _owner The address of the account you will create.
+   * @dev If account already exists, returns its id.
+   * If not, it creates an account for a given address and returns the id.
+   * @param _owner The address of the account.
    */
-  function createAccount(address _owner) external payable returns (uint64 id) {
-    unchecked {id = accountCount++;}
-    Account storage account = accounts[id];
-    account.owner = _owner;
-    uint32 fullStake = Cint32.compress(msg.value);
-    account.fullStake = fullStake;
-    emit AccountCreated(_owner, fullStake);
+  function accountRoutine(address _owner) public returns (uint64 id) {
+    if (accountIdOf[_owner] != 0) {
+      id = accountIdOf[_owner];
+    } else {
+      id = accountCount++;
+      accountIdOf[_owner] = id;
+      accounts[id] = Account({
+        owner: _owner,
+        fullStake: 0,
+        lockedStake: 0,
+        withdrawingTimestamp: 0
+      });
+    }
   }
 
   /**
    * @dev Funds an existing account.
    * @param _accountId The id of the account to fund. Doesn't have to belong to sender.
    */
+  // todo modify for erc20, and pass address instead
   function fundAccount(uint64 _accountId) external payable {
     unchecked {
       Account storage account = accounts[_accountId];
@@ -244,6 +255,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * Withdrawals are not instant to prevent frontrunning.
    * @param _accountId The id of the account. Must belong to sender.
    */
+  // todo modify for erc20, don't pass id nor address. pass token addr
   function startWithdrawAccount(uint64 _accountId) external {
     Account storage account = accounts[_accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
@@ -256,6 +268,8 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _accountId The id of the account. Must belong to sender.
    * @param _amount The amount to be withdrawn.
    */
+  // todo modify for erc20, don't pass id nor address.
+  // pass token and amont
   function withdrawAccount(uint64 _accountId, uint256 _amount) external {
     unchecked {
       Account storage account = accounts[_accountId];
@@ -340,6 +354,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _ipfsUri IPFS uri that links to the content of the item
    * @param _harddata Optional data that is stored on-chain
    */
+  // todo dont pass accountId
   function addItem(
     uint64 _listId,
     uint64 _accountId,
@@ -475,6 +490,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _editionTimestamp The challenge is made upon the edition available at this timestamp.
    * @param _reason IPFS uri containing the evidence for the challenge.
    */
+  // todo dont pass challengerId, use accountRoutine
   function challengeItem(
     uint64 _challengerId,
     uint64 _itemId,
@@ -704,6 +720,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       || _list.freeAdoptions
     );
   }
+
+  // todo view to see cost of challenging
 
   // ----- PURE FUNCTIONS -----
 
