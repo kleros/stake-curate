@@ -124,7 +124,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   event StakeCurateCreated();
   event ChangedStakeCurateSettings(uint256 _withdrawalPeriod, uint32 _challengeWindow, address _governor);
 
-  event AccountCreated(address _owner, uint32 _fullStake);
+  event AccountCreated(address _owner);
   event AccountFunded(uint64 _accountId, uint32 _fullStake);
   event AccountStartWithdraw(uint64 _accountId);
   event AccountWithdrawn(uint64 _accountId, uint32 _fullStake);
@@ -134,15 +134,14 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ListCreated(List _list, string _metalist);
   event ListUpdated(uint64 _listId, List _list, string _metalist);
 
-  event ItemAdded(uint64 _listId, uint64 _accountId, string _ipfsUri,
-    bytes _harddata
-  );
+  event ItemAdded(uint64 _listId, string _ipfsUri, bytes _harddata);
   event ItemEdited(uint64 _itemId, string _ipfsUri, bytes _harddata);
   event ItemStartRetraction(uint64 _itemId);
   event ItemStopRetraction(uint64 _itemId);
   // there's no need for "ItemRetracted"
   // since it will automatically be considered retracted after the period.
   event ItemRecommitted(uint64 _itemId);
+  // todo remove adopterId
   event ItemAdopted(uint64 _itemId, uint64 _adopterId);
 
   event ItemChallenged(uint64 _itemId, uint32 _editionTimestamp, string _reason);
@@ -232,6 +231,7 @@ contract StakeCurate is IArbitrable, IEvidence {
         lockedStake: 0,
         withdrawingTimestamp: 0
       });
+      emit AccountCreated(_owner);
     }
   }
 
@@ -350,19 +350,16 @@ contract StakeCurate is IArbitrable, IEvidence {
   /**
    * @notice Adds an item to a list.
    * @param _listId Id of the list the item will be included in
-   * @param _accountId Id of the account owning the item.
    * @param _ipfsUri IPFS uri that links to the content of the item
    * @param _harddata Optional data that is stored on-chain
    */
-  // todo dont pass accountId
   function addItem(
     uint64 _listId,
-    uint64 _accountId,
     string calldata _ipfsUri,
     bytes calldata _harddata
   ) external returns (uint64 id) {
-    Account memory account = accounts[_accountId];
-    require(account.owner == msg.sender, "Only account owner can invoke account");
+    uint64 accountId = accountRoutine(msg.sender);
+    Account memory account = accounts[accountId];
     unchecked {id = itemCount++;} 
     Item storage item = items[id];
     List storage list = lists[_listId];
@@ -370,13 +367,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough free stake");
     // Item can be submitted
     item.state = ItemState.Included;
-    item.accountId = _accountId;
+    item.accountId = accountId;
     item.listId = _listId;
     item.retractionTimestamp = 0;
     item.commitTimestamp = uint32(block.timestamp);
     item.harddata = _harddata;
 
-    emit ItemAdded(_listId, _accountId, _ipfsUri, _harddata);
+    emit ItemAdded(_listId, _ipfsUri, _harddata);
   }
 
   // todo redo this function
@@ -424,6 +421,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
+    // v todo this might be flawed. item may be outdated, uncollateralized...
+    // but, solution may be to just stop the retraction on edit / recommit
     require(getItemState(_itemId) == ItemState.Retracting, "Item is not being retracted");
     item.retractionTimestamp = 0;
     emit ItemStopRetraction(_itemId);
@@ -485,20 +484,15 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @notice Challenge an item, with the intent of removing it and obtaining a reward.
-   * @param _challengerId Id of the account challenger is challenging on behalf
    * @param _itemId Item to challenge.
    * @param _editionTimestamp The challenge is made upon the edition available at this timestamp.
    * @param _reason IPFS uri containing the evidence for the challenge.
    */
-  // todo dont pass challengerId, use accountRoutine
   function challengeItem(
-    uint64 _challengerId,
     uint64 _itemId,
     uint32 _editionTimestamp,
     string calldata _reason
   ) external payable returns (uint64 id) {
-    // this function does many things and stack goes too deep
-    // that's why many things have to be figured out dynamically
     require(
       _editionTimestamp + stakeCurateSettings.challengeWindow >= block.timestamp,
       "Too late to challenge that edition"
@@ -519,11 +513,6 @@ contract StakeCurate is IArbitrable, IEvidence {
       + arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData),
       "Not covering the full cost"
     );
-
-    // this validation is not needed for security, since the challenger is only
-    // referenced to forward the reward if challenge is won. but, it's nicer.
-    // todo remove when 1:1 address account
-    require(accounts[_challengerId].owner == msg.sender, "Only account owner can challenge on behalf");
     
     // Item can be challenged if: Young, Included, Retracting
     ItemState dynamicState = getItemState(_itemId);
@@ -557,7 +546,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     disputes[id] = DisputeSlot({
       arbitratorDisputeId: arbitratorDisputeId,
       itemId: _itemId,
-      challengerId: _challengerId,
+      challengerId: accountRoutine(msg.sender),
       arbitrationSetting: list.arbitrationSettingId,
       state: DisputeState.Used,
       itemStake: list.requiredStake,
