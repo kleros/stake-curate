@@ -312,17 +312,18 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @dev Creates a list. They store all settings related to the dispute, stake, etc.
+   * @param _governor The governor of the list.
    * @param _list The list to create.
    * @param _metalist IPFS uri with additional data pertaining to the list.
    */
   function createList(
+      address _governor,
       List memory _list,
       string calldata _metalist
   ) external returns (uint64 id) {
-    // todo also pass governor as address, and override passed governorId.
-    // try to create if it doesn't exist with "accountRoutine"
     require(_list.arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
     unchecked {id = listCount++;}
+    _list.governorId = accountRoutine(_governor);
     lists[id] = _list;
     require(listLegalCheck(id), "Cannot create illegal list");
     emit ListCreated(_list, _metalist);
@@ -330,19 +331,20 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @dev Updates an existing list. Can only be called by its governor.
+   * @param _governor The governor of the list.
    * @param _listId Id of the list to be updated.
    * @param _list New list data to replace current one.
    * @param _metalist IPFS uri with additional data pertaining to the list.
    */
   function updateList(
+    address _governor,
     uint64 _listId,
     List memory _list,
     string calldata _metalist
   ) external {
-    // todo also pass governor as address, and override passed governorId.
-    // try to create if it doesn't exist with "accountRoutine"
     require(_list.arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
     require(accounts[lists[_listId].governorId].owner == msg.sender, "Only governor can update list");
+    _list.governorId = accountRoutine(_governor);
     lists[_listId] = _list;
     require(listLegalCheck(_listId), "Cannot make list illegal");
     emit ListUpdated(_listId, _list, _metalist);
