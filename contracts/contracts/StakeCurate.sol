@@ -141,8 +141,8 @@ contract StakeCurate is IArbitrable, IEvidence {
   // there's no need for "ItemRetracted"
   // since it will automatically be considered retracted after the period.
   event ItemRecommitted(uint64 _itemId);
-  // todo remove adopterId
-  event ItemAdopted(uint64 _itemId, uint64 _adopterId);
+  // no need for event for adopt. new owner can be read from sender.
+  // this is the case for Recommit or Edit.
 
   event ItemChallenged(uint64 _itemId, uint32 _editionTimestamp, string _reason);
 
@@ -426,35 +426,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(getItemState(_itemId) == ItemState.Retracting, "Item is not being retracted");
     item.retractionTimestamp = 0;
     emit ItemStopRetraction(_itemId);
-  }
-
-  /**
-   * @dev Adopts an item that's in adoption. This means, the ownership of the item is transferred
-   * from previous account to this new account. This serves as protection for certain attacks.
-   * It also allows reviving invalid items, while preserving the history.
-   * For lists with freeAdoptions, adopters can altruistically fix wrong items
-   * instead of challenging and removing them.
-   * @param _itemId Item to adopt.
-   * @param _adopterId Id of an account belonging to adopter, that will be new owner.
-   */
-  // todo remove. this function will stop being maintained.
-  function adoptItem(uint64 _itemId, uint64 _adopterId) external {
-    Item storage item = items[_itemId];
-    Account memory account = accounts[item.accountId];
-    Account memory adopter = accounts[_adopterId];
-    List memory list = lists[item.listId];
-
-    require(adopter.owner == msg.sender, "Only adopter owner can adopt");
-    // todo ?? require(item.state == ItemState.Used, "Item slot must be Used");
-    require(itemIsInAdoption(item, list, account), "Item is not in adoption");
-    uint256 freeStake = getFreeStake(adopter);
-    require(Cint32.decompress(list.requiredStake) <= freeStake, "Cannot afford adopting this item");
-
-    item.accountId = _adopterId;
-    item.retractionTimestamp = 0;
-    item.commitTimestamp = uint32(block.timestamp);
-
-    emit ItemAdopted(_itemId, _adopterId);
   }
 
   /**
