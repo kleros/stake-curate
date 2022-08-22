@@ -65,6 +65,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     // check its usage in challengeItem and the general policy to understand its role
     uint32 challengeWindow;
     uint32 currentMetaEvidenceId;
+    // --- 2nd slot
+    // prevents relevant historical balance checks from being too long
+    uint32 maxAgeForInclusion;
+    // todo add balance split periods.
+    
+    // minimum challengerStake/requiredStake ratio, in basis points
+    uint32 minChallengerStakeRatio;
   }
 
   /// @dev Some uint256 are lossily compressed into uint32 using Cint32.sol
@@ -123,7 +130,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   // Used to initialize counters in the subgraph
   event StakeCurateCreated();
-  event ChangedStakeCurateSettings(uint256 _withdrawalPeriod, uint32 _challengeWindow, address _governor);
+  event ChangedStakeCurateSettings(StakeCurateSettings _settings);
 
   event AccountCreated(address _owner);
   event AccountFunded(uint64 _accountId, uint32 _fullStake);
@@ -169,15 +176,12 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /** 
    * @dev Constructs the StakeCurate contract.
-   * @param _withdrawalPeriod Waiting period to execute a withdrawal
-   * @param _governor Address able to update withdrawalPeriod, metaEvidence, and change govenor
+   * @param _settings Initial StakeCurate Settings.
    * @param _metaEvidence IPFS uri of the initial MetaEvidence
    */
-  constructor(uint32 _withdrawalPeriod, uint32 _challengeWindow, address _governor, string memory _metaEvidence) {
-    stakeCurateSettings.withdrawalPeriod = _withdrawalPeriod;
-    stakeCurateSettings.challengeWindow = _challengeWindow;
-    stakeCurateSettings.governor = _governor;
-    // starting metaEvidenceId is 0, no need to set it. 
+  constructor(StakeCurateSettings memory _settings, string memory _metaEvidence) {
+    _settings.currentMetaEvidenceId = 0; // make sure it's set to zero
+    stakeCurateSettings = _settings;
 
     // purpose: prevent dispute zero from being used.
     // this dispute has the ArbitrationSetting = 0. it will be
@@ -189,7 +193,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     accountCount = 1; // accounts[0] cannot be used either
 
     emit StakeCurateCreated();
-    emit ChangedStakeCurateSettings(_withdrawalPeriod, _challengeWindow, _governor);
+    emit ChangedStakeCurateSettings(_settings);
     emit MetaEvidence(0, _metaEvidence);
     emit ArbitrationSettingCreated(address(0), "");
   }
@@ -198,19 +202,18 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @dev Governor changes the general settings of Stake Curate
-   * @param _withdrawalPeriod Waiting period to execute a withdrawal
-   * @param _governor The new address able to change these settings
+   * @param _settings New settings. The currentMetaEvidenceId is not used
    * @param _metaEvidence IPFS uri to the new MetaEvidence
    */
   function changeStakeCurateSettings(
-    uint32 _withdrawalPeriod, uint32 _challengeWindow, address _governor,
+    StakeCurateSettings memory _settings,
     string calldata _metaEvidence
   ) external {
     require(msg.sender == stakeCurateSettings.governor, "Only governor can change these settings");
-    stakeCurateSettings.withdrawalPeriod = _withdrawalPeriod;
-    stakeCurateSettings.challengeWindow = _challengeWindow;
-    stakeCurateSettings.governor = _governor;
-    emit ChangedStakeCurateSettings(_withdrawalPeriod, _challengeWindow, _governor);
+    // currentMetaEvidenceId must be incremental, so preserve previous one.
+    _settings.currentMetaEvidenceId = stakeCurateSettings.currentMetaEvidenceId;
+    stakeCurateSettings = _settings;
+    emit ChangedStakeCurateSettings(_settings);
     stakeCurateSettings.currentMetaEvidenceId++;
     emit MetaEvidence(stakeCurateSettings.currentMetaEvidenceId, _metaEvidence);
   }
@@ -698,9 +701,16 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   function listLegalCheck(uint64 _listId) public view returns (bool isLegal) {
     List memory list = lists[_listId];
-    // todo check ageForInclusion is below maximum
-    // todo check challenger stake is over minimum ratio
-    isLegal = true;
+    if (list.ageForInclusion > stakeCurateSettings.maxAgeForInclusion) {
+      isLegal = false;
+    } else if (
+      ((Cint32.decompress(list.challengerStake) * 10_000)
+      / Cint32.decompress(list.requiredStake)) < stakeCurateSettings.minChallengerStakeRatio
+    ) {
+      isLegal = false;
+    } else {
+      isLegal = true;
+    }
   }
 
   // ----- PURE FUNCTIONS -----
