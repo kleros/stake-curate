@@ -46,6 +46,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Included,
     Disputed,
     Removed,
+    IllegalList,
     Uncollateralized,
     Outdated,
     Retracting,
@@ -321,9 +322,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     // todo also pass governor as address, and override passed governorId.
     // try to create if it doesn't exist with "accountRoutine"
     require(_list.arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
-    // todo verify challengerStake is minimum or more (compared to requiredStake)
     unchecked {id = listCount++;}
     lists[id] = _list;
+    require(listLegalCheck(id), "Cannot create illegal list");
     emit ListCreated(_list, _metalist);
   }
 
@@ -342,8 +343,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     // try to create if it doesn't exist with "accountRoutine"
     require(_list.arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
     require(accounts[lists[_listId].governorId].owner == msg.sender, "Only governor can update list");
-    // todo verify challengerStake is minimum or more (compared to requiredStake)
     lists[_listId] = _list;
+    require(listLegalCheck(_listId), "Cannot make list illegal");
     emit ListUpdated(_listId, _list, _metalist);
   }
 
@@ -358,6 +359,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     string calldata _ipfsUri,
     bytes calldata _harddata
   ) external returns (uint64 id) {
+    require(listLegalCheck(_listId), "Cannot add item to illegal list");
     uint64 accountId = accountRoutine(msg.sender);
     Account memory account = accounts[accountId];
     unchecked {id = itemCount++;} 
@@ -384,6 +386,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     bytes calldata _harddata
   ) external {
     Item storage item = items[_itemId];
+    require(listLegalCheck(item.listId), "Cannot edit item in illegal list");
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
     require(item.retractionTimestamp == 0, "Item is being removed");
@@ -440,6 +443,8 @@ contract StakeCurate is IArbitrable, IEvidence {
   // function currently broken.
   function recommitItem(uint64 _itemId) external {
     Item storage item = items[_itemId];
+    require(listLegalCheck(item.listId), "Cannot recommit item in illegal list");
+
     Account memory account = accounts[item.accountId];
     List memory list = lists[item.listId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
@@ -638,6 +643,8 @@ contract StakeCurate is IArbitrable, IEvidence {
         && item.retractionTimestamp + list.retractionPeriod <= block.timestamp
     ) {
       return (ItemState.Retracted);
+    } else if (!listLegalCheck(item.listId)) {
+      return (ItemState.IllegalList);
     } else if (
         // not held by the required stake
         (
@@ -685,6 +692,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     ArbitrationSetting memory setting =
       arbitrationSettings[lists[items[_itemId].listId].arbitrationSettingId];
     return (setting.arbitrator.arbitrationCost(setting.arbitratorExtraData));
+  }
+
+  function listLegalCheck(uint64 _listId) public view returns (bool isLegal) {
+    List memory list = lists[_listId];
+    // todo check ageForInclusion is below maximum
+    // todo check challenger stake is over minimum ratio
+    isLegal = true;
   }
 
   // ----- PURE FUNCTIONS -----
