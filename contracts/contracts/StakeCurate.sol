@@ -681,7 +681,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     );
   }
 
-  // todo view to see cost of challenging
+  function arbitrationCost(uint64 _itemId) external view returns (uint256 cost) {
+    ArbitrationSetting memory setting =
+      arbitrationSettings[lists[items[_itemId].listId].arbitrationSettingId];
+    return (setting.arbitrator.arbitrationCost(setting.arbitratorExtraData));
+  }
 
   // ----- PURE FUNCTIONS -----
 
