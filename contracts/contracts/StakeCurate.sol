@@ -35,12 +35,16 @@ contract StakeCurate is IArbitrable, IEvidence {
    * +Included: the item is considered included, can be challenged.
    * +Disputed: currently under a Dispute.
    * +Removed: a Dispute ruled to remove this item.
+   * IllegalList: item belongs to a list with bad parameters.
+   * * interaction is purposedly discouraged.
    * Uncollateralized: owner doesn't have enough collateral,
    * * also triggers if owner can withdraw.
    * Outdated: item was committed before the last list version.
    * Retracting: owner is currently retracting the item.
    * * can still be challenged.
    * Retracted: owner made it go through the retraction period.
+   * Withdrawing: item can be challenged, but the owner is in a
+   ** withdrawing period.
    */
   enum ItemState {
     Nothing,
@@ -52,7 +56,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     Uncollateralized,
     Outdated,
     Retracting,
-    Retracted
+    Retracted,
+    Withdrawing
   }
 
   uint256 internal constant RULING_OPTIONS = 2;
@@ -559,6 +564,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       dynamicState == ItemState.Young
       || dynamicState == ItemState.Included
       || dynamicState == ItemState.Retracting
+      || dynamicState == ItemState.Withdrawing
     , "Item cannot be challenged");
 
     // All requirements met, begin
@@ -695,6 +701,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   function getItemState(uint64 _itemId) public view returns (ItemState) {
     Item memory item = items[_itemId];
     List memory list = lists[item.listId];
+    Stake memory stake = stakes[item.accountId][address(list.token)];
     if (item.state == ItemState.Disputed) {
       // if item is disputed, no matter if list is illegal, the dispute predominates.
       return (ItemState.Disputed);
@@ -730,6 +737,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       // Retracting is checked at the end, because it signals that the
       // item is currently collateralized. 
       return (ItemState.Retracting);
+    } else if (stake.withdrawingTimestamp != 0) {
+      return (ItemState.Withdrawing);
     } else if (
         // todo check account balances
         // to figure out the latest moment in which collateralization was interrupted
