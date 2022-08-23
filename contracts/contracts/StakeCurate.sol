@@ -11,6 +11,7 @@ pragma solidity ^0.8.14;
 import "@kleros/erc-792/contracts/IArbitrable.sol";
 import "@kleros/erc-792/contracts/IArbitrator.sol";
 import "@kleros/erc-792/contracts/erc-1497/IEvidence.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./Cint32.sol";
 
 /**
@@ -76,11 +77,18 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   /// @dev Some uint256 are lossily compressed into uint32 using Cint32.sol
+  // todo remove legacy stakes
   struct Account {
     address owner;
     uint32 fullStake;
     uint32 lockedStake;
     uint32 withdrawingTimestamp; // frontrunning protection. overflows in 2106.
+  }
+
+  struct Stake {
+    uint32 free;
+    uint32 locked;
+    uint32 withdrawingTimestamp;
   }
 
   struct List {
@@ -93,7 +101,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // if keep, rename. todo
     uint32 upgradePeriod; // extends time to edit the item without getting adopted. could be uint16 w/ minutes
     // ----
-    // todo add erc20 token address
+    IERC20 token;
     bool freeAdoptions; // all items are in adoption all the time
     uint32 challengerStake; // how much challenger puts as stake to be awarded on failure to owner
     uint32 ageForInclusion; // how much time from Young to Included, in seconds
@@ -120,6 +128,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint24 freespace;
     // ----
     uint32 challengerStake; // put by the challenger, sent to whoever side wins.
+    IERC20 token;
   }
 
   struct ArbitrationSetting {
@@ -134,9 +143,10 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ChangedStakeCurateSettings(StakeCurateSettings _settings);
 
   event AccountCreated(address _owner);
-  event AccountFunded(uint64 _accountId, uint32 _fullStake);
-  event AccountStartWithdraw(uint64 _accountId);
-  event AccountWithdrawn(uint64 _accountId, uint32 _fullStake);
+  event AccountFunded(uint64 _accountId, IERC20 _token, uint32 _freeStake);
+  event AccountStartWithdraw(IERC20 _token);
+  event AccountStopWithdraw(IERC20 _token);
+  event AccountWithdrawn(IERC20 _token, uint32 _freeStake);
 
   event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
 
@@ -168,6 +178,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   mapping(address => uint64) public accountIdOf;
   mapping(uint64 => Account) public accounts;
+  mapping(uint64 => mapping(address => Stake)) public stakes;
 
   mapping(uint64 => List) public lists;
   mapping(uint64 => Item) public items;
@@ -242,60 +253,71 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @dev Funds an existing account.
-   * @param _accountId The id of the account to fund. Doesn't have to belong to sender.
+   * @param _recipient Address of the account that receives the funds.
+   * @param _token Token to fund the account with.
+   * @param _amount How much token to fund with.
    */
-  // todo modify for erc20, and pass address instead
-  function fundAccount(uint64 _accountId) external payable {
-    unchecked {
-      Account storage account = accounts[_accountId];
-      uint256 fullStake = Cint32.decompress(account.fullStake) + msg.value;
-      uint32 compressedFullStake = Cint32.compress(fullStake);
-      account.fullStake = compressedFullStake;
-      emit AccountFunded(_accountId, compressedFullStake);
-    }
+  function fundAccount(address _recipient, IERC20 _token, uint256 _amount) external {
+    require(_token.transferFrom(msg.sender, address(this), _amount), "Fund: transfer failed");
+    uint64 accountId = accountRoutine(_recipient);
+
+    Stake storage stake = stakes[accountId][address(_token)];
+    stake.free = Cint32.compress(Cint32.decompress(stake.free) + _amount);
+    emit AccountFunded(accountId, _token, stake.free);
   }
 
   /**
-   * @dev Starts a withdrawal process on an account you own.
+   * @dev Starts a withdrawal process on your account, for a token.
    * Withdrawals are not instant to prevent frontrunning.
-   * @param _accountId The id of the account. Must belong to sender.
+   * @param _token Token to start withdrawing.
    */
-  // todo modify for erc20, don't pass id nor address. pass token addr
-  function startWithdrawAccount(uint64 _accountId) external {
-    Account storage account = accounts[_accountId];
-    require(account.owner == msg.sender, "Only account owner can invoke account");
-    account.withdrawingTimestamp = uint32(block.timestamp);
-    emit AccountStartWithdraw(_accountId);
+  function startWithdraw(IERC20 _token) external {
+    uint64 accountId = accountRoutine(msg.sender);
+    stakes[accountId][address(_token)].withdrawingTimestamp = uint32(block.timestamp);
+    emit AccountStartWithdraw(_token);
+  }
+  /**
+   * @dev Stops a withdrawal process on your account, for a token.
+   * @param _token Token to stopwithdrawing.
+   */
+  function stopWithdraw(IERC20 _token) external {
+    uint64 accountId = accountRoutine(msg.sender);
+    stakes[accountId][address(_token)].withdrawingTimestamp = 0;
+    emit AccountStopWithdraw(_token);
   }
 
   /**
-   * @dev Withdraws any amount on an account that finished the withdrawing process.
-   * @param _accountId The id of the account. Must belong to sender.
+   * @dev Withdraws any amount of held token for your account.
+   * calling after withdrawing period entails to a full withdraw
+   * if the withdrawal, part of the requested amount will be burnt.
+   * @param _token Token to withdraw.
    * @param _amount The amount to be withdrawn.
    */
-  // todo modify for erc20, don't pass id nor address.
-  // pass token and amont
-  function withdrawAccount(uint64 _accountId, uint256 _amount) external {
-    unchecked {
-      Account storage account = accounts[_accountId];
-      require(account.owner == msg.sender, "Only account owner can invoke account");
-      uint32 timestamp = account.withdrawingTimestamp;
-      require(timestamp != 0, "Withdrawal didn't start");
-      require(
-        timestamp + stakeCurateSettings.withdrawalPeriod <= block.timestamp,
-        "Withdraw period didn't pass"
-      );
-      uint256 fullStake = Cint32.decompress(account.fullStake);
-      uint256 lockedStake = Cint32.decompress(account.lockedStake);
-      uint256 freeStake = fullStake - lockedStake; // we needed to decompress fullstake anyway
-      require(freeStake >= _amount, "You can't afford to withdraw that much");
-      // Initiate withdrawal
-      uint32 newStake = Cint32.compress(fullStake - _amount);
-      account.fullStake = newStake;
-      account.withdrawingTimestamp = 0;
-      payable(account.owner).send(_amount);
-      emit AccountWithdrawn(_accountId, newStake);
+  // todo burns
+  function withdrawAccount(IERC20 _token, uint256 _amount) external {
+    uint64 accountId = accountRoutine(msg.sender);
+    uint256 toSender;
+    uint256 toBurn = 0;
+    Stake storage stake = stakes[accountId][address(_token)];
+    if (
+      (stake.withdrawingTimestamp + stakeCurateSettings.withdrawalPeriod)
+      <= block.timestamp
+    ) {
+      // no burn, since the period was completed.
+      toSender = _amount;
+    } else {
+      // todo implement burn.
+      toSender = _amount;
     }
+
+    uint256 freeStake = Cint32.decompress(stake.free);
+    require(freeStake >= _amount, "Cannot afford this withdraw");
+    // proceed to withdraw.
+    _token.transfer(msg.sender, toSender);
+    // todo _token.transfer(stakeCurateSettings.burner, toBurn);
+    stake.free = Cint32.compress(freeStake - _amount);
+    stake.withdrawingTimestamp = 0;
+    emit AccountWithdrawn(_token, stake.free);
   }
 
   /**
@@ -568,7 +590,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       state: DisputeState.Used,
       itemStake: list.requiredStake,
       challengerStake: list.challengerStake,
-      freespace: 0
+      freespace: 0,
+      token: list.token
     });
 
     emit ItemChallenged(_itemId, _editionTimestamp, _reason);
@@ -662,7 +685,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       state: DisputeState.Free,
       itemStake: 0,
       challengerStake: 0,
-      freespace: 0
+      freespace: 0,
+      token: IERC20(address(0))
     });
 
     emit Ruling(arbSetting.arbitrator, _disputeId, _ruling);

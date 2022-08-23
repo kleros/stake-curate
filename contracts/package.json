@@ -6,6 +6,7 @@
   "license": "UNLICENSED",
   "dependencies": {
     "@kleros/erc-792": "^8.0.0",
+    "@openzeppelin/contracts": "^4.7.3",
     "hardhat": "^2.8.3"
   },
   "prettier": {
@@ -15,7 +16,7 @@
     "test": "TS_NODE_TRANSPILE_ONLY=1 npx hardhat test",
     "test:gas": "REPORT_GAS=T npm test",
     "deploy": "npx hardhat run scripts/deploy.ts --network kovan",
-    "seed":  "npx hardhat run scripts/seed.ts --network kovan"
+    "seed": "npx hardhat run scripts/seed.ts --network kovan"
   },
   "devDependencies": {
     "@nomiclabs/hardhat-ethers": "^2.0.4",
