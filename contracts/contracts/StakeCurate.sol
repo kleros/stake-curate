@@ -25,6 +25,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used }
+  enum AdoptionState { Unavailable, OnlyOwner, FullAdoption }
 
   /**
    * @dev "+" means the state can be stored. Else, is dynamic. Meanings:
@@ -383,25 +384,37 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ItemAdded(_listId, _ipfsUri, _harddata);
   }
 
-  // todo redo this function
-  // will be refactored into attempting to adopt / revive if not owned.
   function editItem(
     uint64 _itemId,
     string calldata _ipfsUri,
     bytes calldata _harddata
   ) external {
-    Item storage item = items[_itemId];
-    require(listLegalCheck(item.listId), "Cannot edit item in illegal list");
-    Account memory account = accounts[item.accountId];
-    require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(item.retractionTimestamp == 0, "Item is being removed");
-    require(item.state == ItemState.Included, "Item must be Included");
-    uint256 freeStake = getFreeStake(account);
-    List memory list = lists[item.listId];
-    require(freeStake >= Cint32.decompress(list.requiredStake), "Cannot afford to edit this item");
-
-    item.harddata = _harddata;
-    item.commitTimestamp = uint32(block.timestamp);
+    Item memory preItem = items[_itemId];
+    AdoptionState adoption = getAdoptionState(_itemId);
+    require(adoption != AdoptionState.Unavailable, "Item cannot be edited");
+    uint64 senderId = accountRoutine(msg.sender);
+    // if not current owner: can only edit if FullAdoption
+    require(
+      adoption == AdoptionState.FullAdoption || senderId == preItem.accountId,
+      "Unauthorized edit"
+    );
+    
+    // instead of further checks, just edit the item and do a status check.
+    items[_itemId] = Item({
+      accountId: senderId,
+      listId: preItem.listId,
+      retractionTimestamp: 0,
+      state: ItemState.Included,
+      commitTimestamp: uint32(block.timestamp),
+      freeSpace: 0,
+      harddata: _harddata
+    });
+    // if not Young or Included, something went wrong so it's reverted
+    ItemState newState = getItemState(_itemId);
+    require(
+      newState == ItemState.Included || newState == ItemState.Young,
+      "No edit: would be invalid"
+    );    
 
     emit ItemEdited(_itemId, _ipfsUri, _harddata);
   }
@@ -437,28 +450,36 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   /**
-   * @dev Updates commit timestamp of an item. This is used as protection for 
-   * item submitters. Items have to opt in to the new list version.
+   * @dev Updates commit timestamp of an item. It also reclaims the item if
+   * sender is different from previous owner, according to adoption rules.
+   * The difference with editItem is that recommitItem doesn't create a new edition.
    * @param _itemId Item to recommit.
    */
-  // todo redo this function. instead of just updating, it should act as the goto function for:
-  // adopting
-  // reviving an item (because they can be Removed, Retracted, etc...)
-  // the previous "update commit timestamp" usage for list versions.
-  // function currently broken.
   function recommitItem(uint64 _itemId) external {
+    Item memory preItem = items[_itemId];
+    AdoptionState adoption = getAdoptionState(_itemId);
+    require(adoption != AdoptionState.Unavailable, "Item cannot be recommitted");
+    uint64 senderId = accountRoutine(msg.sender);
+    // if not current owner: can only recommit if FullAdoption
+    require(
+      adoption == AdoptionState.FullAdoption || senderId == preItem.accountId,
+      "Unauthorized recommit"
+    );
+
+    // instead of further checks, just change the item and do a status check.
     Item storage item = items[_itemId];
-    require(listLegalCheck(item.listId), "Cannot recommit item in illegal list");
-
-    Account memory account = accounts[item.accountId];
-    List memory list = lists[item.listId];
-    require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(item.retractionTimestamp == 0, "Item is being retracted");
-    
-    uint256 freeStake = getFreeStake((account));
-    require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough to recommit item");
-
+    // to recommit, we change values directly to avoid "rebuilding" the harddata
+    item.accountId = senderId;
+    item.retractionTimestamp = 0;
+    item.state = ItemState.Included;
     item.commitTimestamp = uint32(block.timestamp);
+
+    // if not Young or Included, something went wrong so it's reverted
+    ItemState newState = getItemState(_itemId);
+    require(
+      newState == ItemState.Included || newState == ItemState.Young,
+      "No recommit: would be invalid"
+    );
 
     emit ItemRecommitted(_itemId);
   }
@@ -681,48 +702,50 @@ contract StakeCurate is IArbitrable, IEvidence {
     }
   }
 
-  function itemIsInAdoption(uint64 _itemId) public view returns (bool inAdoption) {
+  // even though it's "Adoption", this is also an umbrella term for "recommitting"
+  function getAdoptionState(uint64 _itemId) public view returns (AdoptionState) {
     ItemState state = getItemState(_itemId);
     // only these two ItemStates cannot be adopted in any circumstance
     // Disputed, you need to wait for the Dispute to be resolved first.
     // IllegalList, because, no matter the conditions of the item,
     // the illegality of the list prevents further interaction with the item.
     if (state == ItemState.Disputed || state == ItemState.IllegalList) {
-      return (false);
+      return (AdoptionState.Unavailable);
     }
 
     Item memory item = items[_itemId];
     List memory list = lists[item.listId];
     if (list.freeAdoptions) {
       // now, any kind of adoption is allowed with freeAdoptions
-      return (true);
+      return (AdoptionState.FullAdoption);
     }
     // adoption in Removed or Outdated depend on the time.
+    // todo do same for uncollateralized??
     // when item is ruled to be Removed, a commitTimestamp is set for this purpose.
     if (state == ItemState.Removed) {
       if ((item.commitTimestamp + list.upgradePeriod) >= block.timestamp) {
-        // not enough time ellapsed for item to be in adoption
-        return (false);
+        // not enough time ellapsed for item to be in full adoption
+        return (AdoptionState.OnlyOwner);
       } else {
         // item is removed + it's gone through the upgrade period, so it can be adopted.
-        return (true);
+        return (AdoptionState.FullAdoption);
       }
     }
     // when item is Outdated, the timestamp of the version is compared
     if (state == ItemState.Outdated) {
       if ((list.versionTimestamp + list.upgradePeriod) >= block.timestamp) {
-        return (false);
+        return (AdoptionState.OnlyOwner);
       } else {
-        return (true);
+        return (AdoptionState.FullAdoption);
       }
     }
     // Young and Included imply intent on keeping the item
     if (state == ItemState.Young || state == ItemState.Included) {
-      return (false);
+      return (AdoptionState.OnlyOwner);
     }
     // anything else is a state in which owner neglects (e.g. Uncollateralized)
     // or purposedly wants to get rid of it (e.g. Retracting)
-    return (true);
+    return (AdoptionState.FullAdoption);
   }
 
   function arbitrationCost(uint64 _itemId) external view returns (uint256 cost) {
