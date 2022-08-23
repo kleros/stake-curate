@@ -357,11 +357,14 @@ contract StakeCurate is IArbitrable, IEvidence {
   /**
    * @notice Adds an item to a list.
    * @param _listId Id of the list the item will be included in
+   * @param _forListVersion Timestamp of the version this action is intended for.
+   * If list governor were to frontrun a version change, then it reverts.
    * @param _ipfsUri IPFS uri that links to the content of the item
    * @param _harddata Optional data that is stored on-chain
    */
   function addItem(
     uint64 _listId,
+    uint32 _forListVersion,
     string calldata _ipfsUri,
     bytes calldata _harddata
   ) external returns (uint64 id) {
@@ -371,6 +374,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     unchecked {id = itemCount++;} 
     Item storage item = items[id];
     List storage list = lists[_listId];
+    require(_forListVersion == list.versionTimestamp, "Different list version");
     uint256 freeStake = getFreeStake(account);
     require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough free stake");
     // Item can be submitted
@@ -386,12 +390,19 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   function editItem(
     uint64 _itemId,
+    uint32 _forListVersion,
     string calldata _ipfsUri,
     bytes calldata _harddata
   ) external {
     Item memory preItem = items[_itemId];
+    require(
+      _forListVersion == lists[preItem.listId].versionTimestamp,
+      "Different list version"
+    );
     AdoptionState adoption = getAdoptionState(_itemId);
     require(adoption != AdoptionState.Unavailable, "Item cannot be edited");
+
+
     uint64 senderId = accountRoutine(msg.sender);
     // if not current owner: can only edit if FullAdoption
     require(
@@ -452,9 +463,15 @@ contract StakeCurate is IArbitrable, IEvidence {
    * sender is different from previous owner, according to adoption rules.
    * The difference with editItem is that recommitItem doesn't create a new edition.
    * @param _itemId Item to recommit.
+   * @param _forListVersion Timestamp of the version this action is intended for.
+   * If list governor were to frontrun a version change, then it reverts.
    */
-  function recommitItem(uint64 _itemId) external {
+  function recommitItem(uint64 _itemId, uint32 _forListVersion) external {
     Item memory preItem = items[_itemId];
+    require(
+      _forListVersion == lists[preItem.listId].versionTimestamp,
+      "Different list version"
+    );
     AdoptionState adoption = getAdoptionState(_itemId);
     require(adoption != AdoptionState.Unavailable, "Item cannot be recommitted");
     uint64 senderId = accountRoutine(msg.sender);
