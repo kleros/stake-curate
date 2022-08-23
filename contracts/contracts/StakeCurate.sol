@@ -635,9 +635,15 @@ contract StakeCurate is IArbitrable, IEvidence {
   function getItemState(uint64 _itemId) public view returns (ItemState) {
     Item memory item = items[_itemId];
     List memory list = lists[item.listId];
-    if (
+    if (item.state == ItemState.Disputed) {
+      // if item is disputed, no matter if list is illegal, the dispute predominates.
+      return (ItemState.Disputed);
+    } else if (!listLegalCheck(item.listId)) {
+      // list legality is then checked, to prevent meaningful interaction
+      // with illegal lists.
+      return (ItemState.IllegalList);
+    } else if (
         item.state == ItemState.Removed
-        || item.state == ItemState.Disputed
         || item.state == ItemState.Nothing
     ) {
       // these states are returned as they are.
@@ -648,8 +654,6 @@ contract StakeCurate is IArbitrable, IEvidence {
         && item.retractionTimestamp + list.retractionPeriod <= block.timestamp
     ) {
       return (ItemState.Retracted);
-    } else if (!listLegalCheck(item.listId)) {
-      return (ItemState.IllegalList);
     } else if (
         // not held by the required stake
         (
@@ -663,6 +667,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     } else if (item.commitTimestamp <= list.versionTimestamp) {
       return (ItemState.Outdated);
     } else if (item.retractionTimestamp != 0) {
+      // Retracting is checked at the end, because it signals that the
+      // item is currently collateralized. 
       return (ItemState.Retracting);
     } else if (
         // todo check account balances
@@ -675,22 +681,48 @@ contract StakeCurate is IArbitrable, IEvidence {
     }
   }
 
-  // todo redo with getItemState
-  // also make it a public view, with _itemId
-  function itemIsInAdoption(Item memory _item, List memory _list, Account memory _account) internal view returns (bool) {
-    // check if any of the 5 conditions for adoption is met:
-    bool beingRetracted = _item.retractionTimestamp != 0;
-    bool accountWithdrawing = _account.withdrawingTimestamp != 0;
-    bool noCommitAfterListUpdate = _item.commitTimestamp <= _list.versionTimestamp
-      && block.timestamp >= _list.versionTimestamp + _list.upgradePeriod;
-    bool notEnoughFreeStake = getFreeStake(_account) < Cint32.decompress(_list.requiredStake);
-    return (
-      beingRetracted
-      || accountWithdrawing
-      || noCommitAfterListUpdate
-      || notEnoughFreeStake
-      || _list.freeAdoptions
-    );
+  function itemIsInAdoption(uint64 _itemId) public view returns (bool inAdoption) {
+    ItemState state = getItemState(_itemId);
+    // only these two ItemStates cannot be adopted in any circumstance
+    // Disputed, you need to wait for the Dispute to be resolved first.
+    // IllegalList, because, no matter the conditions of the item,
+    // the illegality of the list prevents further interaction with the item.
+    if (state == ItemState.Disputed || state == ItemState.IllegalList) {
+      return (false);
+    }
+
+    Item memory item = items[_itemId];
+    List memory list = lists[item.listId];
+    if (list.freeAdoptions) {
+      // now, any kind of adoption is allowed with freeAdoptions
+      return (true);
+    }
+    // adoption in Removed or Outdated depend on the time.
+    // when item is ruled to be Removed, a commitTimestamp is set for this purpose.
+    if (state == ItemState.Removed) {
+      if ((item.commitTimestamp + list.upgradePeriod) >= block.timestamp) {
+        // not enough time ellapsed for item to be in adoption
+        return (false);
+      } else {
+        // item is removed + it's gone through the upgrade period, so it can be adopted.
+        return (true);
+      }
+    }
+    // when item is Outdated, the timestamp of the version is compared
+    if (state == ItemState.Outdated) {
+      if ((list.versionTimestamp + list.upgradePeriod) >= block.timestamp) {
+        return (false);
+      } else {
+        return (true);
+      }
+    }
+    // Young and Included imply intent on keeping the item
+    if (state == ItemState.Young || state == ItemState.Included) {
+      return (false);
+    }
+    // anything else is a state in which owner neglects (e.g. Uncollateralized)
+    // or purposedly wants to get rid of it (e.g. Retracting)
+    return (true);
   }
 
   function arbitrationCost(uint64 _itemId) external view returns (uint256 cost) {
