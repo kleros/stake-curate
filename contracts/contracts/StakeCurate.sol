@@ -442,8 +442,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
-    // v todo this might be flawed. item may be outdated, uncollateralized...
-    // but, solution may be to just stop the retraction on edit / recommit
     require(getItemState(_itemId) == ItemState.Retracting, "Item is not being retracted");
     item.retractionTimestamp = 0;
     emit ItemStopRetraction(_itemId);
