@@ -552,7 +552,6 @@ contract StakeCurate is IArbitrable, IEvidence {
       "Too late to challenge that edition"
     );
     Item storage item = items[_itemId];
-    Account storage account = accounts[item.accountId];
     List memory list = lists[item.listId];
     Stake storage stake = stakes[item.accountId][address(list.token)];
 
