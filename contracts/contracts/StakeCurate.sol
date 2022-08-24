@@ -672,6 +672,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[dispute.itemId];
     Account storage account = accounts[item.accountId];
     Stake storage stake = stakes[item.accountId][address(dispute.token)];
+    uint256 award;
+    address awardee;
     // 3. apply ruling. what to do when refuse to arbitrate?
     // just default towards keeping the item.
     // 0 refuse, 1 staker, 2 challenger.
@@ -687,32 +689,26 @@ contract StakeCurate is IArbitrable, IEvidence {
       stake.free = Cint32.compress(Cint32.decompress(stake.free) + toUnlock);
       stake.locked = Cint32.compress(Cint32.decompress(stake.locked) - toUnlock);
       
-      // pay the challengerStake to the submitter. apply burn.
-      uint256 challengerStake = Cint32.decompress(dispute.challengerStake);
-      uint256 toAccount = challengerStake * (10_000 - stakeCurateSettings.burnRate) / 10_000;
-      uint256 toBurn = challengerStake - toAccount;
-  
-      // todo should do try catch, to prevent items from being stuck?
-      // also how to prevent bad arbitrators from getting rules stuck?
-      // todo refactor this dupe code out
-      dispute.token.transfer(account.owner, toAccount);
-      dispute.token.transfer(stakeCurateSettings.burner, toBurn);
+      award = Cint32.decompress(dispute.challengerStake);
+      awardee = account.owner;
     } else {
       // challenger won.
       // 4b. slot is now Removed
       item.state = ItemState.Removed;
-      // now, award the dispute stake to challenger
-      uint256 award = Cint32.decompress(dispute.itemStake);
+
+      award = Cint32.decompress(dispute.itemStake);
+      awardee = accounts[dispute.challengerId].owner;
+
       // remove amount from the locked stake of the account
       stake.locked = Cint32.compress(Cint32.decompress(stake.locked) - award);
-      
-      uint256 toAccount = award * (10_000 - stakeCurateSettings.burnRate) / 10_000;
-      uint256 toBurn = award - toAccount;
-      // todo should do try catch, to prevent items from being stuck?
-      // also how to prevent bad arbitrators from getting rules stuck?
-      dispute.token.transfer(account.owner, toAccount);
-      dispute.token.transfer(stakeCurateSettings.burner, toBurn);
     }
+
+    uint256 toAccount = award * (10_000 - stakeCurateSettings.burnRate) / 10_000;
+    uint256 toBurn = award - toAccount;
+    // todo should do try catch, to prevent items from being stuck?
+    // also how to prevent bad arbitrators from getting rules stuck?
+    dispute.token.transfer(account.owner, toAccount);
+    dispute.token.transfer(stakeCurateSettings.burner, toBurn);
     // destroy the disputeSlot information, to trigger refunds
     disputes[localDisputeId] = DisputeSlot({
       arbitratorDisputeId: 0,
