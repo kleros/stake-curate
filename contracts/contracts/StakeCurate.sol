@@ -91,12 +91,8 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   /// @dev Some uint256 are lossily compressed into uint32 using Cint32.sol
-  // todo remove legacy stakes
   struct Account {
     address owner;
-    uint32 fullStake;
-    uint32 lockedStake;
-    uint32 withdrawingTimestamp; // frontrunning protection. overflows in 2106.
   }
 
   struct Stake {
@@ -256,10 +252,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       id = accountCount++;
       accountIdOf[_owner] = id;
       accounts[id] = Account({
-        owner: _owner,
-        fullStake: 0,
-        lockedStake: 0,
-        withdrawingTimestamp: 0
+        owner: _owner
       });
       emit AccountCreated(_owner);
     }
@@ -408,20 +401,25 @@ contract StakeCurate is IArbitrable, IEvidence {
   ) external returns (uint64 id) {
     require(listLegalCheck(_listId), "Cannot add item to illegal list");
     uint64 accountId = accountRoutine(msg.sender);
-    Account memory account = accounts[accountId];
-    unchecked {id = itemCount++;} 
-    Item storage item = items[id];
-    List storage list = lists[_listId];
-    require(_forListVersion == list.versionTimestamp, "Different list version");
-    uint256 freeStake = getFreeStake(account);
-    require(freeStake >= Cint32.decompress(list.requiredStake), "Not enough free stake");
-    // Item can be submitted
-    item.state = ItemState.Included;
-    item.accountId = accountId;
-    item.listId = _listId;
-    item.retractionTimestamp = 0;
-    item.commitTimestamp = uint32(block.timestamp);
-    item.harddata = _harddata;
+    unchecked {id = itemCount++;}
+    require(_forListVersion == lists[_listId].versionTimestamp, "Different list version");
+
+    // we create the item, then check if it's valid.
+    items[id] = Item({
+      accountId: accountId,
+      listId: _listId,
+      retractionTimestamp: 0,
+      state: ItemState.Included,
+      commitTimestamp: uint32(block.timestamp),
+      freeSpace: 0,
+      harddata: _harddata
+    });
+    // if not Young or Included, something went wrong so it's reverted
+    ItemState newState = getItemState(id);
+    require(
+      newState == ItemState.Included || newState == ItemState.Young,
+      "Revert item creation: would be invalid"
+    );
 
     emit ItemAdded(_listId, _ipfsUri, _harddata);
   }
@@ -472,6 +470,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @dev Starts an item retraction process.
    * @param _itemId Item to retract.
    */
+   // todo fix, this is wrong rn
   function startRetractItem(uint64 _itemId) external {
     Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
@@ -555,21 +554,30 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item storage item = items[_itemId];
     Account storage account = accounts[item.accountId];
     List memory list = lists[item.listId];
+    Stake storage stake = stakes[item.accountId][address(list.token)];
 
     // editions of outdated versions are unincluded and thus cannot be challenged
     // this require covers the edge case: item owner updates before the challenge window
+    // it also protects challenger from malicious list updates snatching the challengerStake
     require(_editionTimestamp >= list.versionTimestamp, "This edition belongs to an outdated list version");
 
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
-    // challenger must cover challengerStake + arbitrationCost
-    // todo refactor when erc20 stakes, as challengerStake will be expressed in tokens
-    require(msg.value >= 
-      Cint32.decompress(list.challengerStake)
-      + arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData),
-      "Not covering the full cost"
+    // challenger must cover arbitrationCost in value
+    require(msg.value >= arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData),
+      "Not covering the arbitration cost"
+    );
+
+    // and challengerStake in allowed tokens. try to get them
+    require(
+      list.token.transferFrom(
+        msg.sender,
+        address(this),
+        Cint32.decompress(list.challengerStake)
+      ),
+      "Challenger stake not covered"
     );
     
-    // Item can be challenged if: Young, Included, Retracting
+    // Item can be challenged if: Young, Included, Retracting, Withdrawing
     ItemState dynamicState = getItemState(_itemId);
     require(
       dynamicState == ItemState.Young
@@ -584,7 +592,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // create dispute
     uint256 arbitratorDisputeId =
       arbSetting.arbitrator.createDispute{
-        value: arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData)}(
+        value: msg.value}(
         RULING_OPTIONS, arbSetting.arbitratorExtraData
       );
     require(arbitratorAndDisputeIdToLocal
@@ -594,10 +602,10 @@ contract StakeCurate is IArbitrable, IEvidence {
       [address(arbSetting.arbitrator)][arbitratorDisputeId] = id;
 
     item.state = ItemState.Disputed;
-
-    account.lockedStake =
-        Cint32.compress(Cint32.decompress(account.lockedStake)
-        + Cint32.decompress(list.requiredStake));
+    
+    uint256 toLock = Cint32.decompress(list.requiredStake);
+    stake.free = Cint32.compress(Cint32.decompress(stake.free) - toLock);
+    stake.locked = Cint32.compress(Cint32.decompress(stake.locked) + toLock);
 
     disputes[id] = DisputeSlot({
       arbitratorDisputeId: arbitratorDisputeId,
@@ -613,12 +621,12 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     emit ItemChallenged(_itemId, _editionTimestamp, _reason);
     // ERC 1497
-    uint256 evidenceGroupId = _itemId;
+    // evidenceGroupId is the itemId, since it's unique per item
     emit Dispute(
       arbSetting.arbitrator, arbitratorDisputeId,
-      stakeCurateSettings.currentMetaEvidenceId, evidenceGroupId
+      stakeCurateSettings.currentMetaEvidenceId, _itemId
     );
-    emit Evidence(arbSetting.arbitrator, evidenceGroupId, msg.sender, _reason);
+    emit Evidence(arbSetting.arbitrator, _itemId, msg.sender, _reason);
   }
 
   /**
@@ -634,6 +642,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * to render evidence properly.
    * @param _evidence IPFS uri linking to the evidence.
    */
+   // todo refactor to support Resolver evidence interface?
   function submitEvidence(uint64 _itemId, IArbitrator _arbitrator, string calldata _evidence) external {
     emit Evidence(_arbitrator, _itemId, msg.sender, _evidence);
   }
@@ -658,11 +667,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     // dispute.state == DisputeState.Used
     // deleting the mapping makes the arbitrator unable to recall
     // this function*
-    // * bad arbitrator can rule this, and then reuse the disputeId.
+    // * bad arbitrator can reuse a disputeId after ruling.
     arbitratorAndDisputeIdToLocal[msg.sender][_disputeId] = 0;
 
     Item storage item = items[dispute.itemId];
     Account storage account = accounts[item.accountId];
+    Stake storage stake = stakes[item.accountId][address(dispute.token)];
     // 3. apply ruling. what to do when refuse to arbitrate?
     // just default towards keeping the item.
     // 0 refuse, 1 staker, 2 challenger.
@@ -674,24 +684,35 @@ contract StakeCurate is IArbitrable, IEvidence {
       }
       item.state = ItemState.Included;
       // free the locked stake
-      uint256 lockedAmount = Cint32.decompress(account.lockedStake);
-      unchecked {
-        uint256 updatedLockedAmount = lockedAmount - Cint32.decompress(dispute.itemStake);
-        account.lockedStake = Cint32.compress(updatedLockedAmount);
-      }
-      // pay the challengerStake to the submitter
-      payable(account.owner).send(Cint32.decompress(dispute.challengerStake));
+      uint256 toUnlock = Cint32.decompress(dispute.itemStake);
+      stake.free = Cint32.compress(Cint32.decompress(stake.free) + toUnlock);
+      stake.locked = Cint32.compress(Cint32.decompress(stake.locked) - toUnlock);
+      
+      // pay the challengerStake to the submitter. apply burn.
+      uint256 challengerStake = Cint32.decompress(dispute.challengerStake);
+      uint256 toAccount = challengerStake * (10_000 - stakeCurateSettings.burnRate) / 10_000;
+      uint256 toBurn = challengerStake - toAccount;
+  
+      // todo should do try catch, to prevent items from being stuck?
+      // also how to prevent bad arbitrators from getting rules stuck?
+      // todo refactor this dupe code out
+      dispute.token.transfer(account.owner, toAccount);
+      dispute.token.transfer(stakeCurateSettings.burner, toBurn);
     } else {
       // challenger won.
       // 4b. slot is now Removed
       item.state = ItemState.Removed;
       // now, award the dispute stake to challenger
-      uint256 amount = Cint32.decompress(dispute.itemStake) + Cint32.decompress(dispute.challengerStake);
-      // remove amount from the account
-      account.fullStake = Cint32.compress(Cint32.decompress(account.fullStake) - amount);
-      account.lockedStake = Cint32.compress(Cint32.decompress(account.lockedStake) - amount);
-      // is it dangerous to send before the end of the function? please answer on audit
-      payable(accounts[dispute.challengerId].owner).send(amount);
+      uint256 award = Cint32.decompress(dispute.itemStake);
+      // remove amount from the locked stake of the account
+      stake.locked = Cint32.compress(Cint32.decompress(stake.locked) - award);
+      
+      uint256 toAccount = award * (10_000 - stakeCurateSettings.burnRate) / 10_000;
+      uint256 toBurn = award - toAccount;
+      // todo should do try catch, to prevent items from being stuck?
+      // also how to prevent bad arbitrators from getting rules stuck?
+      dispute.token.transfer(account.owner, toAccount);
+      dispute.token.transfer(stakeCurateSettings.burner, toBurn);
     }
     // destroy the disputeSlot information, to trigger refunds
     disputes[localDisputeId] = DisputeSlot({
@@ -733,13 +754,14 @@ contract StakeCurate is IArbitrable, IEvidence {
     ) {
       return (ItemState.Retracted);
     } else if (
-        // not held by the required stake
+        // has gone through Withdrawing period,
+        // or not held by the required stake
         (
-          accounts[item.accountId].withdrawingTimestamp != 0
-          && accounts[item.accountId].withdrawingTimestamp
+          stake.withdrawingTimestamp != 0
+          && stake.withdrawingTimestamp
             + stakeCurateSettings.withdrawalPeriod <= block.timestamp
         )
-        || getFreeStake(accounts[item.accountId]) < Cint32.decompress(list.requiredStake)
+        || Cint32.decompress(stake.free) < Cint32.decompress(list.requiredStake)
     ) {
       return (ItemState.Uncollateralized);
     } else if (item.commitTimestamp <= list.versionTimestamp) {
@@ -824,14 +846,6 @@ contract StakeCurate is IArbitrable, IEvidence {
       isLegal = false;
     } else {
       isLegal = true;
-    }
-  }
-
-  // ----- PURE FUNCTIONS -----
-
-  function getFreeStake(Account memory _account) internal pure returns (uint256) {
-    unchecked {
-      return (Cint32.decompress(_account.fullStake) - Cint32.decompress(_account.lockedStake));
     }
   }
 }
