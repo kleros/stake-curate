@@ -75,10 +75,19 @@ contract StakeCurate is IArbitrable, IEvidence {
     // --- 2nd slot
     // prevents relevant historical balance checks from being too long
     uint32 maxAgeForInclusion;
-    // todo add balance split periods.
     
     // minimum challengerStake/requiredStake ratio, in basis points
     uint32 minChallengerStakeRatio;
+    // burn rate in basis points. applied in "flash withdrawals",
+    // requiredStakes on good challenge, challengerStake in bad challenge.
+    uint32 burnRate;
+    // receives the burns, could be an actual burn address like address(0)
+    // could alternatively act as some kind of public goods funding, or rent.
+    address burner;
+    // --- 3rd slot
+    // maximum size, in time, of a balance record. they are kept in order to
+    // dynamically find out the age of items.
+    uint32 balanceSplitPeriod;
   }
 
   /// @dev Some uint256 are lossily compressed into uint32 using Cint32.sol
@@ -293,12 +302,11 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @dev Withdraws any amount of held token for your account.
-   * calling after withdrawing period entails to a full withdraw
-   * if the withdrawal, part of the requested amount will be burnt.
+   * calling after withdrawing period entails to a full withdraw.
+   * Otherwise, a part of the requested amount will be burnt.
    * @param _token Token to withdraw.
    * @param _amount The amount to be withdrawn.
    */
-  // todo burns
   function withdrawAccount(IERC20 _token, uint256 _amount) external {
     uint64 accountId = accountRoutine(msg.sender);
     uint256 toSender;
@@ -311,15 +319,18 @@ contract StakeCurate is IArbitrable, IEvidence {
       // no burn, since the period was completed.
       toSender = _amount;
     } else {
-      // todo implement burn.
-      toSender = _amount;
+      // burn. round the burn up.
+      toSender = _amount * (10_000 - stakeCurateSettings.burnRate) / 10_000;
+      toBurn = _amount - toSender;
     }
 
     uint256 freeStake = Cint32.decompress(stake.free);
     require(freeStake >= _amount, "Cannot afford this withdraw");
     // proceed to withdraw.
     _token.transfer(msg.sender, toSender);
-    // todo _token.transfer(stakeCurateSettings.burner, toBurn);
+    if (toBurn != 0) {
+      _token.transfer(stakeCurateSettings.burner, toBurn);
+    }
     stake.free = Cint32.compress(freeStake - _amount);
     stake.withdrawingTimestamp = 0;
     emit AccountWithdrawn(_token, stake.free);
