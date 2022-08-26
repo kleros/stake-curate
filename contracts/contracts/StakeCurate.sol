@@ -101,6 +101,14 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 withdrawingTimestamp;
   }
 
+  struct BalanceSplit {
+    // moment the split begins
+    // a split ends at start + balanceSplitPeriod
+    uint32 startTime;
+    // minimum amount there was, from the startTime, to the end of the split.
+    uint32 min;
+  }
+
   struct List {
     uint64 governorId; // governor needs an account
     uint32 requiredStake;
@@ -189,6 +197,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   mapping(address => uint64) public accountIdOf;
   mapping(uint64 => Account) public accounts;
   mapping(uint64 => mapping(address => Stake)) public stakes;
+  mapping(uint64 => mapping(address => BalanceSplit[])) public splits;
 
   mapping(uint64 => List) public lists;
   mapping(uint64 => Item) public items;
@@ -269,7 +278,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint64 accountId = accountRoutine(_recipient);
 
     Stake storage stake = stakes[accountId][address(_token)];
-    stake.free = Cint32.compress(Cint32.decompress(stake.free) + _amount);
+    uint256 freeStake = Cint32.decompress(stake.free) + _amount;
+    stake.free = Cint32.compress(freeStake);
+    balanceRecordRoutine(accountId, address(_token), freeStake);
     emit AccountFunded(accountId, _token, stake.free);
   }
 
@@ -325,6 +336,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       _token.transfer(stakeCurateSettings.burner, toBurn);
     }
     stake.free = Cint32.compress(freeStake - _amount);
+    balanceRecordRoutine(accountId, address(_token), freeStake - _amount);
     stake.withdrawingTimestamp = 0;
     emit AccountWithdrawn(_token, stake.free);
   }
@@ -603,13 +615,17 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.state = ItemState.Disputed;
     
     uint256 toLock = Cint32.decompress(list.requiredStake);
+    uint256 newFreeStake = Cint32.decompress(stake.free) - toLock;
+    uint64 challengerId = accountRoutine(msg.sender);
+    balanceRecordRoutine(challengerId, address(list.token), newFreeStake);
+
     stake.free = Cint32.compress(Cint32.decompress(stake.free) - toLock);
     stake.locked = Cint32.compress(Cint32.decompress(stake.locked) + toLock);
 
     disputes[id] = DisputeSlot({
       arbitratorDisputeId: arbitratorDisputeId,
       itemId: _itemId,
-      challengerId: accountRoutine(msg.sender),
+      challengerId: challengerId,
       arbitrationSetting: list.arbitrationSettingId,
       state: DisputeState.Used,
       itemStake: list.requiredStake,
@@ -686,7 +702,10 @@ contract StakeCurate is IArbitrable, IEvidence {
       item.state = ItemState.Included;
       // free the locked stake
       uint256 toUnlock = Cint32.decompress(dispute.itemStake);
-      stake.free = Cint32.compress(Cint32.decompress(stake.free) + toUnlock);
+      uint256 newFreeStake = Cint32.decompress(stake.free) + toUnlock;
+      balanceRecordRoutine(item.accountId, address(dispute.token), newFreeStake);
+
+      stake.free = Cint32.compress(newFreeStake);
       stake.locked = Cint32.compress(Cint32.decompress(stake.locked) - toUnlock);
       
       award = Cint32.decompress(dispute.challengerStake);
@@ -768,9 +787,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     } else if (stake.withdrawingTimestamp != 0) {
       return (ItemState.Withdrawing);
     } else if (
-        // todo check account balances
-        // to figure out the latest moment in which collateralization was interrupted
-        item.commitTimestamp + list.ageForInclusion < block.timestamp
+        item.commitTimestamp + list.ageForInclusion > block.timestamp
+        || !continuousBalanceCheck(_itemId) 
     ) {
       return (ItemState.Young);
     } else {
@@ -842,5 +860,67 @@ contract StakeCurate is IArbitrable, IEvidence {
     } else {
       isLegal = true;
     }
+  }
+
+  function balanceRecordRoutine(uint64 _accountId, address _token, uint256 _freeStake) internal {
+    uint256 len = splits[_accountId][_token].length;
+    BalanceSplit storage pastSplit = splits[_accountId][_token][len - 1];
+    uint256 pastAmount = Cint32.decompress(pastSplit.min);
+    if (_freeStake <= pastAmount) {
+      // when lower, always rewrite split down.
+      pastSplit.min = Cint32.compress(_freeStake);
+    } else {
+      // since it's higher, check last record time to consider appending.
+      if (block.timestamp >= pastSplit.startTime + stakeCurateSettings.balanceSplitPeriod) {
+        // out of the period. a new split will be made.
+        splits[_accountId][_token].push(BalanceSplit({
+          startTime: uint32(block.timestamp),
+          min: Cint32.compress(_freeStake)
+        }));
+      }
+      // if it's higher and within the split, don't update. 
+    }
+  }
+
+  function continuousBalanceCheck(uint64 _itemId) internal view returns (bool) {
+    Item memory item = items[_itemId];
+    List memory list = lists[item.listId];
+    uint256 requiredStake = Cint32.decompress(list.requiredStake);
+    uint256 targetTime = block.timestamp - list.ageForInclusion;
+    uint64 accountId = item.accountId;
+    address token = address(list.token);
+    uint256 splitPointer = splits[accountId][token].length - 1;
+    // keep track of the amount of the immediately later split (or, current free).
+    uint256 laterAmount = Cint32.decompress(stakes[accountId][token].free);
+    
+    if (requiredStake > laterAmount) return (false);
+
+    uint256 period = stakeCurateSettings.balanceSplitPeriod;
+
+    // we want to process pointer 0, so go until we overflow
+    while (splitPointer != type(uint256).max) {
+      BalanceSplit memory split = splits[accountId][token][splitPointer];
+      // todo make a drawing of this so that people understand.
+      // basically: we want to check that the item was continuously collateralized
+      // during the period. there are periods during which we know
+      // that there was a certain minimum amount at some time.
+      // there are also dark ages in between splits during which
+      // we don't know how much stake there was, but, it was either
+      // equal or greater than previous.
+
+      // when we land in a dark age, if that's earlier than target,
+      // since we survived so far, we naively assume it was collateralized.
+      // this can be wrong, but here it's better to err on inclusion.
+      if ((split.startTime + period) <= targetTime) return (true);
+      // otherwise, we test if we can pass the split.
+      if (requiredStake > split.min) return (false);
+      // we survived, and now check within the split.
+      if (split.startTime <= targetTime) return (true);
+      
+      unchecked { splitPointer--; }
+    }
+
+    // target is beyong the earliest record, not enough time for collateralization.
+    return (false);
   }
 }
