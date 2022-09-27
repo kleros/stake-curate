@@ -44,7 +44,11 @@ contract StakeCurate is IArbitrable, IEvidence {
    * * can still be challenged.
    * Retracted: owner made it go through the retraction period.
    * Withdrawing: item can be challenged, but the owner is in a
-   ** withdrawing period.
+   * * withdrawing period.
+   * RecentlyKept: item can be challenged, but was recently ruled
+   * * to be Kept. Keeping track of this avoids having an item be
+   * * Kept after a bad challenge, and frontrunning an on-chain
+   * * consumption without allowing someone to properly challenge.
    */
   enum ItemState {
     Nothing,
@@ -57,7 +61,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     Outdated,
     Retracting,
     Retracted,
-    Withdrawing
+    Withdrawing,
+    RecentlyKept
   }
 
   uint256 internal constant RULING_OPTIONS = 2;
@@ -90,9 +95,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 balanceSplitPeriod;
   }
 
-  /// @dev Some uint256 are lossily compressed into uint32 using Cint32.sol
   struct Account {
     address owner;
+    // todo count of items owned, for erc-721 visibility
   }
 
   struct Stake {
@@ -126,16 +131,28 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   struct Item {
+    // account that owns the item
     uint64 accountId;
+    // list under which the item is submitted. immutable after creation.
     uint64 listId;
+    // if not zero, marks the start of a retraction process.
     uint32 retractionTimestamp;
+    // hard state of the item, some states can be written in storage.
     ItemState state;
+    // last explicit committal to collateralize the item.
     uint32 commitTimestamp;
-    uint56 freeSpace;
+    // used to figure out if item was RecentlyKept
+    // only needed for the current edition.
+    uint32 lastRuledTimestamp;
+
+    uint32 freeSpace;
+    // arbitrary, optional data for on-chain consumption
     bytes harddata;
   }
 
   struct DisputeSlot {
+    // todo remove, this property is never used, since it's accessed through mapping.
+    // this was probably added back in the days appeals were included here.
     uint256 arbitratorDisputeId;
     // ----
     uint64 challengerId;
@@ -423,6 +440,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       retractionTimestamp: 0,
       state: ItemState.Included,
       commitTimestamp: uint32(block.timestamp),
+      lastRuledTimestamp: 0,
       freeSpace: 0,
       harddata: _harddata
     });
@@ -465,6 +483,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       retractionTimestamp: 0,
       state: ItemState.Included,
       commitTimestamp: uint32(block.timestamp),
+      lastRuledTimestamp: 0, // edition is new, no need to keep track of previous.
       freeSpace: 0,
       harddata: _harddata
     });
@@ -535,6 +554,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // to recommit, we change values directly to avoid "rebuilding" the harddata
     item.accountId = senderId;
     item.retractionTimestamp = 0;
+    // item.lastRuledTimestamp = 0; is more "correct", but won't affect anything.
     item.state = ItemState.Included;
     item.commitTimestamp = uint32(block.timestamp);
 
@@ -588,13 +608,14 @@ contract StakeCurate is IArbitrable, IEvidence {
       "Challenger stake not covered"
     );
     
-    // Item can be challenged if: Young, Included, Retracting, Withdrawing
+    // Item can be challenged if: Young, Included, Retracting, Withdrawing, RecentlyKept
     ItemState dynamicState = getItemState(_itemId);
     require(
       dynamicState == ItemState.Young
       || dynamicState == ItemState.Included
       || dynamicState == ItemState.Retracting
       || dynamicState == ItemState.Withdrawing
+      || dynamicState == ItemState.RecentlyKept
     , "Item cannot be challenged");
 
     // All requirements met, begin
