@@ -45,10 +45,6 @@ contract StakeCurate is IArbitrable, IEvidence {
    * Retracted: owner made it go through the retraction period.
    * Withdrawing: item can be challenged, but the owner is in a
    * * withdrawing period.
-   * RecentlyKept: item can be challenged, but was recently ruled
-   * * to be Kept. Keeping track of this avoids having an item be
-   * * Kept after a bad challenge, and frontrunning an on-chain
-   * * consumption without allowing someone to properly challenge.
    */
   enum ItemState {
     Nothing,
@@ -61,8 +57,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Outdated,
     Retracting,
     Retracted,
-    Withdrawing,
-    RecentlyKept
+    Withdrawing
   }
 
   uint256 internal constant RULING_OPTIONS = 2;
@@ -141,11 +136,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     ItemState state;
     // last explicit committal to collateralize the item.
     uint32 commitTimestamp;
-    // used to figure out if item was RecentlyKept
-    // only needed for the current edition.
-    uint32 lastRuledTimestamp;
 
-    uint32 freeSpace;
+    uint64 freeSpace;
     // arbitrary, optional data for on-chain consumption
     bytes harddata;
   }
@@ -441,7 +433,6 @@ contract StakeCurate is IArbitrable, IEvidence {
       retractionTimestamp: 0,
       state: ItemState.Included,
       commitTimestamp: uint32(block.timestamp),
-      lastRuledTimestamp: 0,
       freeSpace: 0,
       harddata: _harddata
     });
@@ -484,7 +475,6 @@ contract StakeCurate is IArbitrable, IEvidence {
       retractionTimestamp: 0,
       state: ItemState.Included,
       commitTimestamp: uint32(block.timestamp),
-      lastRuledTimestamp: 0, // edition is new, no need to keep track of previous.
       freeSpace: 0,
       harddata: _harddata
     });
@@ -609,14 +599,13 @@ contract StakeCurate is IArbitrable, IEvidence {
       "Challenger stake not covered"
     );
     
-    // Item can be challenged if: Young, Included, Retracting, Withdrawing, RecentlyKept
+    // Item can be challenged if: Young, Included, Retracting, Withdrawing
     ItemState dynamicState = getItemState(_itemId);
     require(
       dynamicState == ItemState.Young
       || dynamicState == ItemState.Included
       || dynamicState == ItemState.Retracting
       || dynamicState == ItemState.Withdrawing
-      || dynamicState == ItemState.RecentlyKept
     , "Item cannot be challenged");
 
     // All requirements met, begin
