@@ -709,6 +709,10 @@ contract StakeCurate is IArbitrable, IEvidence {
         item.retractionTimestamp = uint32(block.timestamp);
       }
       item.state = ItemState.Included;
+      // if list is not outdated, set commitTimestamp
+      if (getItemState(dispute.itemId) != ItemState.Outdated) {
+        item.commitTimestamp = uint32(block.timestamp);
+      }
       // free the locked stake
       uint256 toUnlock = Cint32.decompress(dispute.itemStake);
       uint256 newFreeStake = Cint32.decompress(stake.free) + toUnlock;
