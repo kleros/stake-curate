@@ -115,9 +115,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 retractionPeriod; 
     uint64 arbitrationSettingId;
     uint32 versionTimestamp;
-    // vvv reconsider removing this. holding items is a liability.
-    // if keep, rename. todo
-    uint32 upgradePeriod; // extends time to edit the item without getting adopted. could be uint16 w/ minutes
+    uint32 freeSpace;
     // ----
     IERC20 token;
     bool freeAdoptions; // all items are in adoption all the time
@@ -824,25 +822,13 @@ contract StakeCurate is IArbitrable, IEvidence {
       // now, any kind of adoption is allowed with freeAdoptions
       return (AdoptionState.FullAdoption);
     }
-    // adoption in Removed or Outdated depend on the time.
-    // todo do same for uncollateralized??
-    // when item is ruled to be Removed, a commitTimestamp is set for this purpose.
+
     if (state == ItemState.Removed) {
-      if ((item.commitTimestamp + list.upgradePeriod) >= block.timestamp) {
-        // not enough time ellapsed for item to be in full adoption
-        return (AdoptionState.OnlyOwner);
-      } else {
-        // item is removed + it's gone through the upgrade period, so it can be adopted.
-        return (AdoptionState.FullAdoption);
-      }
+      return (AdoptionState.FullAdoption);
     }
-    // when item is Outdated, the timestamp of the version is compared
+
     if (state == ItemState.Outdated) {
-      if ((list.versionTimestamp + list.upgradePeriod) >= block.timestamp) {
-        return (AdoptionState.OnlyOwner);
-      } else {
-        return (AdoptionState.FullAdoption);
-      }
+      return (AdoptionState.FullAdoption);
     }
     // Young and Included imply intent on keeping the item
     if (state == ItemState.Young || state == ItemState.Included) {
