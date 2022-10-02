@@ -347,14 +347,15 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     uint256 freeStake = Cint32.decompress(stake.free);
     require(freeStake >= _amount, "Cannot afford this withdraw");
-    // proceed to withdraw.
-    _token.transfer(msg.sender, toSender);
-    if (toBurn != 0) {
-      _token.transfer(stakeCurateSettings.burner, toBurn);
-    }
+    // guard
     stake.free = Cint32.compress(freeStake - _amount);
     balanceRecordRoutine(accountId, address(_token), freeStake - _amount);
     stake.withdrawingTimestamp = 0;
+    if (toBurn != 0) {
+      _token.transfer(stakeCurateSettings.burner, toBurn);
+    }
+    // withdraw
+    _token.transfer(msg.sender, toSender);
     emit AccountWithdrawn(_token, stake.free);
   }
 
