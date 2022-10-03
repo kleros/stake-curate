@@ -103,7 +103,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   struct BalanceSplit {
     // moment the split begins
-    // a split ends at start + balanceSplitPeriod
+    // a split ends when the following split starts, or block.timestamp if last.
     uint32 startTime;
     // minimum amount there was, from the startTime, to the end of the split.
     uint32 min;
@@ -864,56 +864,59 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   function balanceRecordRoutine(uint64 _accountId, address _token, uint256 _freeStake) internal {
-    uint256 len = splits[_accountId][_token].length;
-    BalanceSplit storage pastSplit = splits[_accountId][_token][len - 1];
-    uint256 pastAmount = Cint32.decompress(pastSplit.min);
-    if (_freeStake <= pastAmount) {
-      // when lower, always rewrite split down.
-      pastSplit.min = Cint32.compress(_freeStake);
+    BalanceSplit[] storage arr = splits[_accountId][_token];
+    BalanceSplit memory curr = arr[arr.length-1];
+    // the way Cint32 works, comparing values before or after decompression
+    // will return the same result. so, we don't even compress / decompress the splits.
+    uint32 compressedStake = Cint32.compress(_freeStake);
+    if (compressedStake <= curr.min) {
+      // when lower, initiate the following process:
+      // starting from the end, go through all the splits, and remove all splits
+      // such that have more or equal split.
+      // after iterating through this, create a new split with the last timestamp
+      while (arr.length > 0 && compressedStake <= curr.min) {
+        curr = arr[arr.length-1];
+        arr.pop();
+      }
+      arr.push(BalanceSplit({
+          startTime: curr.startTime,
+          min: compressedStake
+        }));
     } else {
       // since it's higher, check last record time to consider appending.
-      if (block.timestamp >= pastSplit.startTime + stakeCurateSettings.balanceSplitPeriod) {
+      if (block.timestamp >= curr.startTime + stakeCurateSettings.balanceSplitPeriod) {
         // out of the period. a new split will be made.
         splits[_accountId][_token].push(BalanceSplit({
           startTime: uint32(block.timestamp),
-          min: Cint32.compress(_freeStake)
+          min: compressedStake
         }));
+      // if it's higher and within the split, we override the amount.
+      // qa : why not override the startTime as well?
+      // because then, if someone were to frequently update their amounts,
+      // the last record would non-stop get pushed to the future.
+      // it would be a rare occurrance if the periods are small, but rather not
+      // risk it. this compromise only reduces the guaranteed collateralization requirement
+      // by the split period.
+      } else {
+        splits[_accountId][_token][arr.length-1].min = compressedStake;
       }
-      // if it's higher and within the split, don't update. 
     }
   }
 
   function continuousBalanceCheck(uint64 _itemId) internal view returns (bool) {
     Item memory item = items[_itemId];
     List memory list = lists[item.listId];
-    uint256 requiredStake = Cint32.decompress(list.requiredStake);
+    uint32 requiredStake = list.requiredStake;
     uint256 targetTime = block.timestamp - list.ageForInclusion;
     uint64 accountId = item.accountId;
     address token = address(list.token);
     uint256 splitPointer = splits[accountId][token].length - 1;
-    // keep track of the amount of the immediately later split (or, current free).
-    uint256 laterAmount = Cint32.decompress(stakes[accountId][token].free);
-    
-    if (requiredStake > laterAmount) return (false);
-
-    uint256 period = stakeCurateSettings.balanceSplitPeriod;
 
     // we want to process pointer 0, so go until we overflow
     while (splitPointer != type(uint256).max) {
       BalanceSplit memory split = splits[accountId][token][splitPointer];
-      // todo make a drawing of this so that people understand.
-      // basically: we want to check that the item was continuously collateralized
-      // during the period. there are periods during which we know
-      // that there was a certain minimum amount at some time.
-      // there are also dark ages in between splits during which
-      // we don't know how much stake there was, but, it was either
-      // equal or greater than previous.
-
-      // when we land in a dark age, if that's earlier than target,
-      // since we survived so far, we naively assume it was collateralized.
-      // this can be wrong, but here it's better to err on inclusion.
-      if ((split.startTime + period) <= targetTime) return (true);
-      // otherwise, we test if we can pass the split.
+      // we test if we can pass the split.
+      // we don't decompress because comparisons work without decompressing
       if (requiredStake > split.min) return (false);
       // we survived, and now check within the split.
       if (split.startTime <= targetTime) return (true);
