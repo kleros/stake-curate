@@ -119,8 +119,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     // ----
     IERC20 token;
     bool freeAdoptions; // all items are in adoption all the time
-    uint32 challengerStake; // how much challenger puts as stake to be awarded on failure to owner
+    uint32 challengerStakeRatio; // (basis points) challenger stake in proportion to the item stake
     uint32 ageForInclusion; // how much time from Young to Included, in seconds
+    uint24 freeSpace2;
   }
 
   struct Item {
@@ -604,11 +605,16 @@ contract StakeCurate is IArbitrable, IEvidence {
     );
 
     // and challengerStake in allowed tokens. try to get them
+    uint256 challengerStake = 
+      Cint32.decompress(list.challengerStakeRatio)
+      * Cint32.decompress(list.requiredStake)
+      / 10_000;
+
     require(
       list.token.transferFrom(
         msg.sender,
         address(this),
-        Cint32.decompress(list.challengerStake)
+        challengerStake
       ),
       "Challenger stake not covered"
     );
@@ -654,7 +660,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       arbitrationSetting: list.arbitrationSettingId,
       state: DisputeState.Used,
       itemStake: list.requiredStake,
-      challengerStake: list.challengerStake,
+      challengerStake: Cint32.compress(challengerStake),
       freespace: 0,
       token: list.token
     });
@@ -870,8 +876,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     if (list.ageForInclusion > stakeCurateSettings.maxAgeForInclusion) {
       isLegal = false;
     } else if (
-      ((Cint32.decompress(list.challengerStake) * 10_000)
-      / Cint32.decompress(list.requiredStake)) < stakeCurateSettings.minChallengerStakeRatio
+      list.challengerStakeRatio < stakeCurateSettings.minChallengerStakeRatio
     ) {
       isLegal = false;
     } else if (
