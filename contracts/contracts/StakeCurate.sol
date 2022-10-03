@@ -43,8 +43,6 @@ contract StakeCurate is IArbitrable, IEvidence {
    * Retracting: owner is currently retracting the item.
    * * can still be challenged.
    * Retracted: owner made it go through the retraction period.
-   * Withdrawing: item can be challenged, but the owner is in a
-   * * withdrawing period.
    */
   enum ItemState {
     Nothing,
@@ -56,8 +54,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     Uncollateralized,
     Outdated,
     Retracting,
-    Retracted,
-    Withdrawing
+    Retracted
   }
 
   uint256 internal constant RULING_OPTIONS = 2;
@@ -324,7 +321,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   /**
    * @dev Stops a withdrawal process on your account.
    */
-  function stopWithdraw(IERC20 _token) external {
+  function stopWithdraw() external {
     uint64 accountId = accountRoutine(msg.sender);
     accounts[accountId].withdrawingTimestamp = 0;
     emit AccountStopWithdraw();
@@ -447,6 +444,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   ) external returns (uint64 id) {
     require(listLegalCheck(_listId), "Cannot add item to illegal list");
     uint64 accountId = accountRoutine(msg.sender);
+    require(accounts[accountId].withdrawingTimestamp == 0, "Cannot add items while withdrawing");
     unchecked {id = itemCount++;}
     require(_forListVersion == lists[_listId].versionTimestamp, "Different list version");
 
@@ -486,6 +484,8 @@ contract StakeCurate is IArbitrable, IEvidence {
 
 
     uint64 senderId = accountRoutine(msg.sender);
+
+    require(accounts[senderId].withdrawingTimestamp == 0, "Cannot edit items while withdrawing");
     // if not current owner: can only edit if FullAdoption
     require(
       adoption == AdoptionState.FullAdoption || senderId == preItem.accountId,
@@ -558,6 +558,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     AdoptionState adoption = getAdoptionState(_itemId);
     require(adoption != AdoptionState.Unavailable, "Item cannot be recommitted");
     uint64 senderId = accountRoutine(msg.sender);
+    require(accounts[senderId].withdrawingTimestamp == 0, "Cannot recommit items while withdrawing");
     // if not current owner: can only recommit if FullAdoption
     require(
       adoption == AdoptionState.FullAdoption || senderId == preItem.accountId,
@@ -628,13 +629,12 @@ contract StakeCurate is IArbitrable, IEvidence {
       "Challenger stake not covered"
     );
     
-    // Item can be challenged if: Young, Included, Retracting, Withdrawing
+    // Item can be challenged if: Young, Included, Retracting
     ItemState dynamicState = getItemState(_itemId);
     require(
       dynamicState == ItemState.Young
       || dynamicState == ItemState.Included
       || dynamicState == ItemState.Retracting
-      || dynamicState == ItemState.Withdrawing
     , "Item cannot be challenged");
 
     // All requirements met, begin
@@ -827,8 +827,6 @@ contract StakeCurate is IArbitrable, IEvidence {
       // Retracting is checked at the end, because it signals that the
       // item is currently collateralized. 
       return (ItemState.Retracting);
-    } else if (accounts[item.accountId].withdrawingTimestamp != 0) {
-      return (ItemState.Withdrawing);
     } else if (
         item.commitTimestamp + list.ageForInclusion > block.timestamp
         || !continuousBalanceCheck(_itemId) 
