@@ -166,6 +166,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   // Used to initialize counters in the subgraph
   event StakeCurateCreated();
   event ChangedStakeCurateSettings(StakeCurateSettings _settings);
+  event ArbitratorAllowance(IArbitrator _arbitrator, bool _allowance);
 
   event AccountCreated(address _owner);
   event AccountFunded(uint64 _accountId, IERC20 _token, uint32 _freeStake);
@@ -211,6 +212,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   mapping(uint64 => DisputeSlot) public disputes;
   mapping(address => mapping(uint256 => uint64)) public arbitratorAndDisputeIdToLocal;
   mapping(uint64 => ArbitrationSetting) public arbitrationSettings;
+  mapping(IArbitrator => bool) public arbitratorAllowance;
 
   /** 
    * @dev Constructs the StakeCurate contract.
@@ -254,6 +256,19 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ChangedStakeCurateSettings(_settings);
     stakeCurateSettings.currentMetaEvidenceId++;
     emit MetaEvidence(stakeCurateSettings.currentMetaEvidenceId, _metaEvidence);
+  }
+
+  /**
+   * @dev Governor allows or disallows arbitrator to be used in Stake Curate.
+   *  This is intended to prevent harmful use or arbitrators (bad periods, no arbFees...)
+   *  and it should prevent a bunch of attacks, since stakes are shared across lists.
+     @param _arbitrator The arbitrator to allow / disallow
+     @param _allowance Whether if it will be allowed or disallowed
+   */
+  function allowArbitrator(IArbitrator _arbitrator, bool _allowance) public {
+    require(msg.sender == stakeCurateSettings.governor, "Only governor can allow arbitrators");
+    arbitratorAllowance[_arbitrator] = _allowance;
+    emit ArbitratorAllowance(_arbitrator, _allowance);
   }
 
   /**
@@ -358,6 +373,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       external returns (uint64 id) {
     unchecked {id = arbitrationSettingCount++;}
     require(_arbitrator != address(0), "Address 0 can't be arbitrator");
+    require(arbitratorAllowance[IArbitrator(_arbitrator)], "Arbitrator not allowed");
     arbitrationSettings[id] = ArbitrationSetting({
       arbitrator: IArbitrator(_arbitrator),
       arbitratorExtraData: _arbitratorExtraData
@@ -858,6 +874,10 @@ contract StakeCurate is IArbitrable, IEvidence {
       / Cint32.decompress(list.requiredStake)) < stakeCurateSettings.minChallengerStakeRatio
     ) {
       isLegal = false;
+    } else if (
+        !arbitratorAllowance[arbitrationSettings[list.arbitrationSettingId].arbitrator]
+      ) {
+        isLegal = false;
     } else {
       isLegal = true;
     }
