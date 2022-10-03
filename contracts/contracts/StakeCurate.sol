@@ -92,13 +92,13 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   struct Account {
     address owner;
+    uint32 withdrawingTimestamp;
     // todo count of items owned, for erc-721 visibility
   }
 
   struct Stake {
     uint32 free;
     uint32 locked;
-    uint32 withdrawingTimestamp;
   }
 
   struct BalanceSplit {
@@ -171,8 +171,8 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   event AccountCreated(address _owner);
   event AccountFunded(uint64 _accountId, IERC20 _token, uint32 _freeStake);
-  event AccountStartWithdraw(IERC20 _token);
-  event AccountStopWithdraw(IERC20 _token);
+  event AccountStartWithdraw();
+  event AccountStopWithdraw();
   event AccountWithdrawn(IERC20 _token, uint32 _freeStake);
 
   event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
@@ -284,7 +284,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       id = accountCount++;
       accountIdOf[_owner] = id;
       accounts[id] = Account({
-        owner: _owner
+        owner: _owner,
+        withdrawingTimestamp: 0
       });
       emit AccountCreated(_owner);
     }
@@ -308,41 +309,50 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   /**
-   * @dev Starts a withdrawal process on your account, for a token.
-   * Withdrawals are not instant to prevent frontrunning.
-   * @param _token Token to start withdrawing.
+   * @dev Starts a withdrawal process on your account.
+   *  Withdrawals are not instant to prevent frontrunning.
+   *  As soon as you can withdraw, you will be able to withdraw anything
+   *  without getting exposed to burns. While you wait for withdraw, you cannot
+   *  own new items.
    */
-  function startWithdraw(IERC20 _token) external {
+  function startWithdraw() external {
     uint64 accountId = accountRoutine(msg.sender);
-    stakes[accountId][address(_token)].withdrawingTimestamp = uint32(block.timestamp);
-    emit AccountStartWithdraw(_token);
+    accounts[accountId].withdrawingTimestamp =
+      uint32(block.timestamp) + stakeCurateSettings.withdrawalPeriod;
+    emit AccountStartWithdraw();
   }
   /**
-   * @dev Stops a withdrawal process on your account, for a token.
-   * @param _token Token to stopwithdrawing.
+   * @dev Stops a withdrawal process on your account.
    */
   function stopWithdraw(IERC20 _token) external {
     uint64 accountId = accountRoutine(msg.sender);
-    stakes[accountId][address(_token)].withdrawingTimestamp = 0;
-    emit AccountStopWithdraw(_token);
+    accounts[accountId].withdrawingTimestamp = 0;
+    emit AccountStopWithdraw();
   }
 
   /**
    * @dev Withdraws any amount of held token for your account.
-   * calling after withdrawing period entails to a full withdraw.
-   * Otherwise, a part of the requested amount will be burnt.
+   *  calling after withdrawing period entails to a full withdraw.
+   *  You can withdraw as many tokens as you want during this period.
+   *  Otherwise, a part of the requested amount will be burnt, to prevent
+   *  frontrunning withdrawal shenanigans against challenge reveals.
+   * 
+   *  Flash withdrawals are allowed because, without them, users could
+   *  device ways to submit wrong items in lists and commit self challenges
+   *  to frontrun, exposing them to the same burn.
+   *  todo: actually... in doing so they would have to endure even more,
+   *  as failed challeges have burns associated with them as well, so
+   *  maybe flash withdrawals shouldn't be allowed after all.
    * @param _token Token to withdraw.
    * @param _amount The amount to be withdrawn.
    */
   function withdrawAccount(IERC20 _token, uint256 _amount) external {
     uint64 accountId = accountRoutine(msg.sender);
+    Account memory account = accounts[accountId];
     uint256 toSender;
     uint256 toBurn = 0;
     Stake storage stake = stakes[accountId][address(_token)];
-    if (
-      (stake.withdrawingTimestamp + stakeCurateSettings.withdrawalPeriod)
-      <= block.timestamp
-    ) {
+    if (account.withdrawingTimestamp <= block.timestamp) {
       // no burn, since the period was completed.
       toSender = _amount;
     } else {
@@ -356,7 +366,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     // guard
     stake.free = Cint32.compress(freeStake - _amount);
     balanceRecordRoutine(accountId, address(_token), freeStake - _amount);
-    stake.withdrawingTimestamp = 0;
     if (toBurn != 0) {
       _token.transfer(stakeCurateSettings.burner, toBurn);
     }
@@ -806,9 +815,8 @@ contract StakeCurate is IArbitrable, IEvidence {
         // has gone through Withdrawing period,
         // or not held by the required stake
         (
-          stake.withdrawingTimestamp != 0
-          && stake.withdrawingTimestamp
-            + stakeCurateSettings.withdrawalPeriod <= block.timestamp
+          accounts[item.accountId].withdrawingTimestamp != 0
+          && accounts[item.accountId].withdrawingTimestamp <= block.timestamp
         )
         || Cint32.decompress(stake.free) < Cint32.decompress(list.requiredStake)
     ) {
@@ -819,7 +827,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       // Retracting is checked at the end, because it signals that the
       // item is currently collateralized. 
       return (ItemState.Retracting);
-    } else if (stake.withdrawingTimestamp != 0) {
+    } else if (accounts[item.accountId].withdrawingTimestamp != 0) {
       return (ItemState.Withdrawing);
     } else if (
         item.commitTimestamp + list.ageForInclusion > block.timestamp
