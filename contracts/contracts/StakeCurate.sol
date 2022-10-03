@@ -93,11 +93,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     // todo count of items owned, for erc-721 visibility
   }
 
-  struct Stake {
-    uint32 free;
-    uint32 locked;
-  }
-
   struct BalanceSplit {
     // moment the split begins
     // a split ends when the following split starts, or block.timestamp if last.
@@ -202,7 +197,6 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   mapping(address => uint64) public accountIdOf;
   mapping(uint64 => Account) public accounts;
-  mapping(uint64 => mapping(address => Stake)) public stakes;
   mapping(uint64 => mapping(address => BalanceSplit[])) public splits;
 
   mapping(uint64 => List) public lists;
@@ -298,11 +292,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(_token.transferFrom(msg.sender, address(this), _amount), "Fund: transfer failed");
     uint64 accountId = accountRoutine(_recipient);
 
-    Stake storage stake = stakes[accountId][address(_token)];
-    uint256 freeStake = Cint32.decompress(stake.free) + _amount;
-    stake.free = Cint32.compress(freeStake);
-    balanceRecordRoutine(accountId, address(_token), freeStake);
-    emit AccountFunded(accountId, _token, stake.free);
+    uint256 newFreeStake = Cint32.decompress(getCompressedFreeStake(accountId, _token)) + _amount;
+    balanceRecordRoutine(accountId, address(_token), newFreeStake);
+    emit AccountFunded(accountId, _token, Cint32.compress(newFreeStake));
   }
 
   /**
@@ -348,7 +340,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     Account memory account = accounts[accountId];
     uint256 toSender;
     uint256 toBurn = 0;
-    Stake storage stake = stakes[accountId][address(_token)];
     if (account.withdrawingTimestamp <= block.timestamp) {
       // no burn, since the period was completed.
       toSender = _amount;
@@ -358,17 +349,16 @@ contract StakeCurate is IArbitrable, IEvidence {
       toBurn = _amount - toSender;
     }
 
-    uint256 freeStake = Cint32.decompress(stake.free);
+    uint256 freeStake = Cint32.decompress(getCompressedFreeStake(accountId, _token));
     require(freeStake >= _amount, "Cannot afford this withdraw");
     // guard
-    stake.free = Cint32.compress(freeStake - _amount);
     balanceRecordRoutine(accountId, address(_token), freeStake - _amount);
     if (toBurn != 0) {
       _token.transfer(stakeCurateSettings.burner, toBurn);
     }
     // withdraw
     _token.transfer(msg.sender, toSender);
-    emit AccountWithdrawn(_token, stake.free);
+    emit AccountWithdrawn(_token, Cint32.compress(freeStake - _amount));
   }
 
   /**
@@ -601,7 +591,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     );
     Item storage item = items[_itemId];
     List memory list = lists[item.listId];
-    Stake storage stake = stakes[item.accountId][address(list.token)];
+
+    uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, list.token);
 
     // editions of outdated versions are unincluded and thus cannot be challenged
     // this require covers the edge case: item owner updates before the challenge window
@@ -655,12 +646,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.state = ItemState.Disputed;
     
     uint256 toLock = Cint32.decompress(list.requiredStake);
-    uint256 newFreeStake = Cint32.decompress(stake.free) - toLock;
+    uint256 newFreeStake = Cint32.decompress(compressedFreeStake) - toLock;
     uint64 challengerId = accountRoutine(msg.sender);
     balanceRecordRoutine(challengerId, address(list.token), newFreeStake);
-
-    stake.free = Cint32.compress(Cint32.decompress(stake.free) - toLock);
-    stake.locked = Cint32.compress(Cint32.decompress(stake.locked) + toLock);
 
     disputes[id] = DisputeSlot({
       arbitratorDisputeId: arbitratorDisputeId,
@@ -726,8 +714,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     arbitratorAndDisputeIdToLocal[msg.sender][_disputeId] = 0;
 
     Item storage item = items[dispute.itemId];
+    // todo since in the future items will be able to be adopted, etc while challenged,
+    // this accountId cannot be taken from the item anymore, and must be taken from the dispute.
     Account storage account = accounts[item.accountId];
-    Stake storage stake = stakes[item.accountId][address(dispute.token)];
+    uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, dispute.token);
+
     uint256 award;
     address awardee;
     // 3. apply ruling. what to do when refuse to arbitrate?
@@ -746,11 +737,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       }
       // free the locked stake
       uint256 toUnlock = Cint32.decompress(dispute.itemStake);
-      uint256 newFreeStake = Cint32.decompress(stake.free) + toUnlock;
+      uint256 newFreeStake = Cint32.decompress(compressedFreeStake) + toUnlock;
       balanceRecordRoutine(item.accountId, address(dispute.token), newFreeStake);
-
-      stake.free = Cint32.compress(newFreeStake);
-      stake.locked = Cint32.compress(Cint32.decompress(stake.locked) - toUnlock);
       
       award = Cint32.decompress(dispute.challengerStake);
       awardee = account.owner;
@@ -761,15 +749,13 @@ contract StakeCurate is IArbitrable, IEvidence {
 
       award = Cint32.decompress(dispute.itemStake);
       awardee = accounts[dispute.challengerId].owner;
-
-      // remove amount from the locked stake of the account
-      stake.locked = Cint32.compress(Cint32.decompress(stake.locked) - award);
     }
 
     uint256 toAccount = award * (10_000 - stakeCurateSettings.burnRate) / 10_000;
     uint256 toBurn = award - toAccount;
     // todo should do try catch, to prevent items from being stuck?
     // also how to prevent bad arbitrators from getting rules stuck?
+    // todo guard before sending
     dispute.token.transfer(account.owner, toAccount);
     dispute.token.transfer(stakeCurateSettings.burner, toBurn);
     // destroy the disputeSlot information, to trigger refunds
@@ -791,7 +777,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   function getItemState(uint64 _itemId) public view returns (ItemState) {
     Item memory item = items[_itemId];
     List memory list = lists[item.listId];
-    Stake memory stake = stakes[item.accountId][address(list.token)];
+    uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, list.token);
     if (item.state == ItemState.Disputed) {
       // if item is disputed, no matter if list is illegal, the dispute predominates.
       return (ItemState.Disputed);
@@ -818,7 +804,7 @@ contract StakeCurate is IArbitrable, IEvidence {
           accounts[item.accountId].withdrawingTimestamp != 0
           && accounts[item.accountId].withdrawingTimestamp <= block.timestamp
         )
-        || Cint32.decompress(stake.free) < Cint32.decompress(list.requiredStake)
+        || Cint32.decompress(compressedFreeStake) < Cint32.decompress(list.requiredStake)
     ) {
       return (ItemState.Uncollateralized);
     } else if (item.commitTimestamp <= list.versionTimestamp) {
@@ -957,5 +943,12 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     // target is beyong the earliest record, not enough time for collateralization.
     return (false);
+  }
+
+  function getCompressedFreeStake(uint64 _accountId, IERC20 _token) public view returns (uint32) {
+    uint256 len = splits[_accountId][address(_token)].length;
+    if (len == 0) return (0);
+
+    return (splits[_accountId][address(_token)][len - 1].min);
   }
 }
