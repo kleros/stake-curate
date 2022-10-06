@@ -110,10 +110,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 freeSpace;
     // ----
     IERC20 token;
-    bool freeAdoptions; // all items are in adoption all the time
     uint32 challengerStakeRatio; // (basis points) challenger stake in proportion to the item stake
     uint32 ageForInclusion; // how much time from Young to Included, in seconds
-    uint24 freeSpace2;
+    uint32 freeSpace2;
   }
 
   struct Item {
@@ -854,13 +853,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     // the illegality of the list prevents further interaction with the item.
     if (state == ItemState.Disputed || state == ItemState.IllegalList) {
       return (AdoptionState.Unavailable);
-    }
-
-    Item memory item = items[_itemId];
-    List memory list = lists[item.listId];
-    if (list.freeAdoptions) {
-      // now, any kind of adoption is allowed with freeAdoptions
-      return (AdoptionState.FullAdoption);
     }
 
     if (state == ItemState.Removed) {
