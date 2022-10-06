@@ -142,8 +142,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 itemStake; // unlocks to submitter if Keep, sent to challenger if Remove
     uint24 freespace;
     // ----
-    uint32 challengerStake; // put by the challenger, sent to whoever side wins.
     IERC20 token;
+    uint32 challengerStake; // put by the challenger, sent to whoever side wins.
+    uint64 itemOwnerId; // since items may change hands during the dispute, you need to store
+    // the owner at dispute time.
   }
 
   struct ArbitrationSetting {
@@ -686,7 +688,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       itemStake: item.stake,
       challengerStake: Cint32.compress(challengerStake),
       freespace: 0,
-      token: list.token
+      token: list.token,
+      itemOwnerId: item.accountId
     });
 
     emit ItemChallenged(_itemId, _editionTimestamp, _reason);
@@ -741,10 +744,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     arbitratorAndDisputeIdToLocal[msg.sender][_disputeId] = 0;
 
     Item storage item = items[dispute.itemId];
-    // todo since in the future items will be able to be adopted, etc while challenged,
-    // this accountId cannot be taken from the item anymore, and must be taken from the dispute.
-    Account storage account = accounts[item.accountId];
-    uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, dispute.token);
+    Account storage ownerAccount = accounts[dispute.itemOwnerId];
+    uint32 compressedFreeStake = getCompressedFreeStake(dispute.itemOwnerId, dispute.token);
 
     uint256 award;
     address awardee;
@@ -768,7 +769,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       balanceRecordRoutine(item.accountId, address(dispute.token), newFreeStake);
       
       award = Cint32.decompress(dispute.challengerStake);
-      awardee = account.owner;
+      awardee = ownerAccount.owner;
     } else {
       // challenger won.
       // 4b. slot is now Removed
@@ -783,7 +784,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // todo should do try catch, to prevent items from being stuck?
     // also how to prevent bad arbitrators from getting rules stuck?
     // todo guard before sending
-    dispute.token.transfer(account.owner, toAccount);
+    dispute.token.transfer(awardee, toAccount);
     dispute.token.transfer(stakeCurateSettings.burner, toBurn);
     // destroy the disputeSlot information, to trigger refunds
     disputes[localDisputeId] = DisputeSlot({
@@ -794,7 +795,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       itemStake: 0,
       challengerStake: 0,
       freespace: 0,
-      token: IERC20(address(0))
+      token: IERC20(address(0)),
+      itemOwnerId: 0
     });
 
     emit Ruling(arbSetting.arbitrator, _disputeId, _ruling);
