@@ -108,7 +108,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 retractionPeriod; 
     uint64 arbitrationSettingId;
     uint32 versionTimestamp;
-    uint32 freeSpace;
+    uint32 maxStake; // protects from some frontrun attacks
     // ----
     IERC20 token;
     uint32 challengerStakeRatio; // (basis points) challenger stake in proportion to the item stake
@@ -437,6 +437,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     unchecked {id = itemCount++;}
     require(_forListVersion == lists[_listId].versionTimestamp, "Different list version");
     require(_stake >= lists[_listId].requiredStake, "Not enough stake");
+    require(_stake <= lists[_listId].maxStake, "Too much stake");
 
     // we create the item, then check if it's valid.
     items[id] = Item({
@@ -476,15 +477,16 @@ contract StakeCurate is IArbitrable, IEvidence {
     bytes calldata _harddata
   ) external {
     Item memory preItem = items[_itemId];
+    List memory list = lists[preItem.listId];
     require(
-      _forListVersion == lists[preItem.listId].versionTimestamp,
+      _forListVersion == list.versionTimestamp,
       "Different list version"
     );
     AdoptionState adoption = getAdoptionState(_itemId);
     uint64 senderId = accountRoutine(msg.sender);
 
     if (adoption == AdoptionState.FullAdoption) {
-      require(_stake >= lists[preItem.listId].requiredStake, "Not enough stake");
+      require(_stake >= list.requiredStake, "Not enough stake");
     } else {
       // outbidding is needed.
       if (senderId == preItem.accountId) {
@@ -496,6 +498,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       }
     }
 
+    require(_stake <= list.maxStake, "Too much stake");
     require(accounts[senderId].withdrawingTimestamp == 0, "Cannot edit items while withdrawing");
     
     // instead of further checks, just edit the item and do a status check.
@@ -554,8 +557,9 @@ contract StakeCurate is IArbitrable, IEvidence {
    */
   function recommitItem(uint64 _itemId, uint32 _stake, uint32 _forListVersion) external {
     Item memory preItem = items[_itemId];
+    List memory list = lists[preItem.listId];
     require(
-      _forListVersion == lists[preItem.listId].versionTimestamp,
+      _forListVersion == list.versionTimestamp,
       "Different list version"
     );
 
@@ -563,7 +567,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     AdoptionState adoption = getAdoptionState(_itemId);
 
     if (adoption == AdoptionState.FullAdoption) {
-      require(_stake >= lists[preItem.listId].requiredStake, "Not enough stake");
+      require(_stake >= list.requiredStake, "Not enough stake");
     } else {
       // outbidding is needed.
       if (senderId == preItem.accountId) {
@@ -575,6 +579,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       }
     }
 
+    require(_stake <= list.maxStake, "Too much stake");
     require(accounts[senderId].withdrawingTimestamp == 0, "Cannot recommit items while withdrawing");
 
     // instead of further checks, just change the item and do a status check.
