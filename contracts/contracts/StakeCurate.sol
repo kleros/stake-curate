@@ -127,8 +127,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     ItemState state;
     // last explicit committal to collateralize the item.
     uint32 commitTimestamp;
-
-    uint64 freeSpace;
+    // how much stake is backing up the item. will be equal or greater than list.requiredStake
+    uint32 stake;
+    uint32 freeSpace;
     // arbitrary, optional data for on-chain consumption
     bytes harddata;
   }
@@ -172,13 +173,13 @@ contract StakeCurate is IArbitrable, IEvidence {
   event ListCreated(List _list, string _metalist);
   event ListUpdated(uint64 _listId, List _list, string _metalist);
 
-  event ItemAdded(uint64 _listId, string _ipfsUri, bytes _harddata);
-  event ItemEdited(uint64 _itemId, string _ipfsUri, bytes _harddata);
+  event ItemAdded(uint64 _listId, uint32 _stake, string _ipfsUri, bytes _harddata);
+  event ItemEdited(uint64 _itemId, uint32 _stake, string _ipfsUri, bytes _harddata);
   event ItemStartRetraction(uint64 _itemId);
   event ItemStopRetraction(uint64 _itemId);
   // there's no need for "ItemRetracted"
   // since it will automatically be considered retracted after the period.
-  event ItemRecommitted(uint64 _itemId);
+  event ItemRecommitted(uint64 _itemId, uint32 _stake);
   // no need for event for adopt. new owner can be read from sender.
   // this is the case for Recommit or Edit.
 
@@ -421,6 +422,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   /**
    * @notice Adds an item to a list.
    * @param _listId Id of the list the item will be included in
+   * @param _stake How much collateral backs up the item, compressed.
    * @param _forListVersion Timestamp of the version this action is intended for.
    * If list governor were to frontrun a version change, then it reverts.
    * @param _ipfsUri IPFS uri that links to the content of the item
@@ -428,6 +430,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    */
   function addItem(
     uint64 _listId,
+    uint32 _stake,
     uint32 _forListVersion,
     string calldata _ipfsUri,
     bytes calldata _harddata
@@ -437,6 +440,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(accounts[accountId].withdrawingTimestamp == 0, "Cannot add items while withdrawing");
     unchecked {id = itemCount++;}
     require(_forListVersion == lists[_listId].versionTimestamp, "Different list version");
+    require(_stake >= lists[_listId].requiredStake, "Not enough stake");
 
     // we create the item, then check if it's valid.
     items[id] = Item({
@@ -445,6 +449,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       retractionTimestamp: 0,
       state: ItemState.Included,
       commitTimestamp: uint32(block.timestamp),
+      stake: _stake,
       freeSpace: 0,
       harddata: _harddata
     });
@@ -455,11 +460,21 @@ contract StakeCurate is IArbitrable, IEvidence {
       "Revert item creation: would be invalid"
     );
 
-    emit ItemAdded(_listId, _ipfsUri, _harddata);
+    emit ItemAdded(_listId, _stake, _ipfsUri, _harddata);
   }
 
+  /**
+   * @notice Edits an item, adopts it if not owned by this account and able.
+   * @param _itemId Id of the item to edit.
+   * @param _stake How much collateral backs up the item, compressed.
+   * @param _forListVersion Timestamp of the version this action is intended for.
+   * If list governor were to frontrun a version change, then it reverts.
+   * @param _ipfsUri IPFS uri that links to the content of the item
+   * @param _harddata Optional data that is stored on-chain
+   */
   function editItem(
     uint64 _itemId,
+    uint32 _stake,
     uint32 _forListVersion,
     string calldata _ipfsUri,
     bytes calldata _harddata
@@ -470,7 +485,10 @@ contract StakeCurate is IArbitrable, IEvidence {
       "Different list version"
     );
     AdoptionState adoption = getAdoptionState(_itemId);
+    // todo refactor edit logic. this function will be completely transformed.
+    // doesn't work properly atm.
     require(adoption != AdoptionState.Unavailable, "Item cannot be edited");
+    require(_stake >= lists[preItem.listId].requiredStake, "Not enough stake");
 
 
     uint64 senderId = accountRoutine(msg.sender);
@@ -489,6 +507,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       retractionTimestamp: 0,
       state: ItemState.Included,
       commitTimestamp: uint32(block.timestamp),
+      stake: _stake,
       freeSpace: 0,
       harddata: _harddata
     });
@@ -499,7 +518,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       "No edit: would be invalid"
     );    
 
-    emit ItemEdited(_itemId, _ipfsUri, _harddata);
+    emit ItemEdited(_itemId, _stake, _ipfsUri, _harddata);
   }
 
   /**
@@ -536,15 +555,17 @@ contract StakeCurate is IArbitrable, IEvidence {
    * sender is different from previous owner, according to adoption rules.
    * The difference with editItem is that recommitItem doesn't create a new edition.
    * @param _itemId Item to recommit.
+   * @param _stake How much collateral backs up the item, compressed.
    * @param _forListVersion Timestamp of the version this action is intended for.
    * If list governor were to frontrun a version change, then it reverts.
    */
-  function recommitItem(uint64 _itemId, uint32 _forListVersion) external {
+  function recommitItem(uint64 _itemId, uint32 _stake, uint32 _forListVersion) external {
     Item memory preItem = items[_itemId];
     require(
       _forListVersion == lists[preItem.listId].versionTimestamp,
       "Different list version"
     );
+    require(_stake >= lists[preItem.listId].requiredStake, "Not enough stake");
     AdoptionState adoption = getAdoptionState(_itemId);
     require(adoption != AdoptionState.Unavailable, "Item cannot be recommitted");
     uint64 senderId = accountRoutine(msg.sender);
@@ -563,6 +584,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // item.lastRuledTimestamp = 0; is more "correct", but won't affect anything.
     item.state = ItemState.Included;
     item.commitTimestamp = uint32(block.timestamp);
+    item.stake = _stake;
 
     // if not Young or Included, something went wrong so it's reverted
     ItemState newState = getItemState(_itemId);
@@ -571,7 +593,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       "No recommit: would be invalid"
     );
 
-    emit ItemRecommitted(_itemId);
+    emit ItemRecommitted(_itemId, _stake);
   }
 
   /**
@@ -608,7 +630,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // and challengerStake in allowed tokens. try to get them
     uint256 challengerStake = 
       Cint32.decompress(list.challengerStakeRatio)
-      * Cint32.decompress(list.requiredStake)
+      * Cint32.decompress(item.stake)
       / 10_000;
 
     require(
@@ -645,7 +667,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     item.state = ItemState.Disputed;
     
-    uint256 toLock = Cint32.decompress(list.requiredStake);
+    uint256 toLock = Cint32.decompress(item.stake);
     uint256 newFreeStake = Cint32.decompress(compressedFreeStake) - toLock;
     uint64 challengerId = accountRoutine(msg.sender);
     balanceRecordRoutine(challengerId, address(list.token), newFreeStake);
@@ -656,7 +678,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       challengerId: challengerId,
       arbitrationSetting: list.arbitrationSettingId,
       state: DisputeState.Used,
-      itemStake: list.requiredStake,
+      itemStake: item.stake,
       challengerStake: Cint32.compress(challengerStake),
       freespace: 0,
       token: list.token
@@ -799,12 +821,12 @@ contract StakeCurate is IArbitrable, IEvidence {
       return (ItemState.Retracted);
     } else if (
         // has gone through Withdrawing period,
-        // or not held by the required stake
+        // or not held by the stake
         (
           accounts[item.accountId].withdrawingTimestamp != 0
           && accounts[item.accountId].withdrawingTimestamp <= block.timestamp
         )
-        || Cint32.decompress(compressedFreeStake) < Cint32.decompress(list.requiredStake)
+        || compressedFreeStake < item.stake
     ) {
       return (ItemState.Uncollateralized);
     } else if (item.commitTimestamp <= list.versionTimestamp) {
@@ -923,7 +945,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   function continuousBalanceCheck(uint64 _itemId) internal view returns (bool) {
     Item memory item = items[_itemId];
     List memory list = lists[item.listId];
-    uint32 requiredStake = list.requiredStake;
+    uint32 requiredStake = item.stake;
     uint256 targetTime = block.timestamp - list.ageForInclusion;
     uint64 accountId = item.accountId;
     address token = address(list.token);
