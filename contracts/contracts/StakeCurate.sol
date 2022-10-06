@@ -134,10 +134,6 @@ contract StakeCurate is IArbitrable, IEvidence {
   }
 
   struct DisputeSlot {
-    // todo remove, this property is never used, since it's accessed through mapping.
-    // this was probably added back in the days appeals were included here.
-    uint256 arbitratorDisputeId;
-    // ----
     uint64 challengerId;
     uint64 itemId;
     uint64 arbitrationSetting;
@@ -672,7 +668,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     balanceRecordRoutine(challengerId, address(list.token), newFreeStake);
 
     disputes[id] = DisputeSlot({
-      arbitratorDisputeId: arbitratorDisputeId,
       itemId: _itemId,
       challengerId: challengerId,
       arbitrationSetting: list.arbitrationSettingId,
@@ -781,7 +776,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     dispute.token.transfer(stakeCurateSettings.burner, toBurn);
     // destroy the disputeSlot information, to trigger refunds
     disputes[localDisputeId] = DisputeSlot({
-      arbitratorDisputeId: 0,
       itemId: 0,
       challengerId: 0,
       arbitrationSetting: 0,
