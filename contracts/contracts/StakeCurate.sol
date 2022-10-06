@@ -26,7 +26,11 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used }
-  enum AdoptionState { Unavailable, OnlyOwner, FullAdoption }
+  /**
+   * @dev "Adoption" pretty much means "you can / cannot edit or recommit".
+   *  To avoid redundancy, this applies either if new owner is different or not.
+   */
+  enum AdoptionState { FullAdoption, NeedsOutbid }
 
   /**
    * @dev "+" means the state can be stored. Else, is dynamic. Meanings:
@@ -480,36 +484,40 @@ contract StakeCurate is IArbitrable, IEvidence {
       "Different list version"
     );
     AdoptionState adoption = getAdoptionState(_itemId);
-    // todo refactor edit logic. this function will be completely transformed.
-    // doesn't work properly atm.
-    require(adoption != AdoptionState.Unavailable, "Item cannot be edited");
-    require(_stake >= lists[preItem.listId].requiredStake, "Not enough stake");
-
-
     uint64 senderId = accountRoutine(msg.sender);
 
+    if (adoption == AdoptionState.FullAdoption) {
+      require(_stake >= lists[preItem.listId].requiredStake, "Not enough stake");
+    } else {
+      // outbidding is needed.
+      if (senderId == preItem.accountId) {
+        // it's enough if you match
+        require(_stake >= preItem.stake, "Match or increase stake");
+      } else {
+        // strict increase
+        require(_stake > preItem.stake, "Increase stake to adopt");
+      }
+    }
+
     require(accounts[senderId].withdrawingTimestamp == 0, "Cannot edit items while withdrawing");
-    // if not current owner: can only edit if FullAdoption
-    require(
-      adoption == AdoptionState.FullAdoption || senderId == preItem.accountId,
-      "Unauthorized edit"
-    );
     
     // instead of further checks, just edit the item and do a status check.
     items[_itemId] = Item({
       accountId: senderId,
       listId: preItem.listId,
       retractionTimestamp: 0,
-      state: ItemState.Included,
+      state: preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Included,
       commitTimestamp: uint32(block.timestamp),
       stake: _stake,
       freeSpace: 0,
       harddata: _harddata
     });
-    // if not Young or Included, something went wrong so it's reverted
+    // if not Young or Included, something went wrong so it's reverted.
+    // you can also edit items while they are Disputed, as that doesn't change
+    // anything about the Dispute in place.
     ItemState newState = getItemState(_itemId);
     require(
-      newState == ItemState.Included || newState == ItemState.Young,
+      newState == ItemState.Included || newState == ItemState.Young || newState == ItemState.Disputed,
       "No edit: would be invalid"
     );    
 
@@ -536,6 +544,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @dev Cancels an ongoing retraction process.
    * @param _itemId Item to stop retracting.
    */
+   // todo remove? just recommit to stop retraction?
   function cancelRetractItem(uint64 _itemId) external {
     Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
@@ -560,33 +569,42 @@ contract StakeCurate is IArbitrable, IEvidence {
       _forListVersion == lists[preItem.listId].versionTimestamp,
       "Different list version"
     );
-    require(_stake >= lists[preItem.listId].requiredStake, "Not enough stake");
-    AdoptionState adoption = getAdoptionState(_itemId);
-    require(adoption != AdoptionState.Unavailable, "Item cannot be recommitted");
+
     uint64 senderId = accountRoutine(msg.sender);
+    AdoptionState adoption = getAdoptionState(_itemId);
+
+    if (adoption == AdoptionState.FullAdoption) {
+      require(_stake >= lists[preItem.listId].requiredStake, "Not enough stake");
+    } else {
+      // outbidding is needed.
+      if (senderId == preItem.accountId) {
+        // it's enough if you match
+        require(_stake >= preItem.stake, "Match or increase stake");
+      } else {
+        // strict increase
+        require(_stake > preItem.stake, "Increase stake to adopt");
+      }
+    }
+
     require(accounts[senderId].withdrawingTimestamp == 0, "Cannot recommit items while withdrawing");
-    // if not current owner: can only recommit if FullAdoption
-    require(
-      adoption == AdoptionState.FullAdoption || senderId == preItem.accountId,
-      "Unauthorized recommit"
-    );
 
     // instead of further checks, just change the item and do a status check.
     Item storage item = items[_itemId];
     // to recommit, we change values directly to avoid "rebuilding" the harddata
     item.accountId = senderId;
     item.retractionTimestamp = 0;
-    // item.lastRuledTimestamp = 0; is more "correct", but won't affect anything.
-    item.state = ItemState.Included;
+    item.state = preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Included;
     item.commitTimestamp = uint32(block.timestamp);
     item.stake = _stake;
 
-    // if not Young or Included, something went wrong so it's reverted
+    // if not Young or Included, something went wrong so it's reverted.
+    // you can also edit items while they are Disputed, as that doesn't change
+    // anything about the Dispute in place.
     ItemState newState = getItemState(_itemId);
     require(
-      newState == ItemState.Included || newState == ItemState.Young,
+      newState == ItemState.Included || newState == ItemState.Young || newState == ItemState.Disputed,
       "No recommit: would be invalid"
-    );
+    );    
 
     emit ItemRecommitted(_itemId, _stake);
   }
@@ -841,28 +859,10 @@ contract StakeCurate is IArbitrable, IEvidence {
   // even though it's "Adoption", this is also an umbrella term for "recommitting"
   function getAdoptionState(uint64 _itemId) public view returns (AdoptionState) {
     ItemState state = getItemState(_itemId);
-    // only these two ItemStates cannot be adopted in any circumstance
-    // Disputed, you need to wait for the Dispute to be resolved first.
-    // IllegalList, because, no matter the conditions of the item,
-    // the illegality of the list prevents further interaction with the item.
-    if (state == ItemState.Disputed || state == ItemState.IllegalList) {
-      return (AdoptionState.Unavailable);
-    }
-
-    if (state == ItemState.Removed) {
+    if (state == ItemState.Removed || state == ItemState.Retracted || state == ItemState.Uncollateralized || state == ItemState.Outdated) {
       return (AdoptionState.FullAdoption);
     }
-
-    if (state == ItemState.Outdated) {
-      return (AdoptionState.FullAdoption);
-    }
-    // Young and Included imply intent on keeping the item
-    if (state == ItemState.Young || state == ItemState.Included) {
-      return (AdoptionState.OnlyOwner);
-    }
-    // anything else is a state in which owner neglects (e.g. Uncollateralized)
-    // or purposedly wants to get rid of it (e.g. Retracting)
-    return (AdoptionState.FullAdoption);
+    return (AdoptionState.NeedsOutbid);
   }
 
   function arbitrationCost(uint64 _itemId) external view returns (uint256 cost) {
