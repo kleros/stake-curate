@@ -92,6 +92,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     address owner;
     uint32 withdrawingTimestamp;
     // todo count of items owned, for erc-721 visibility
+    // todo bankrun protection #2 preference (receive, stake as free, stake as free and increase item)
   }
 
   struct BalanceSplit {
@@ -780,13 +781,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     }
 
     uint256 toAccount = award * (10_000 - stakeCurateSettings.burnRate) / 10_000;
-    uint256 toBurn = award - toAccount;
-    // todo should do try catch, to prevent items from being stuck?
-    // also how to prevent bad arbitrators from getting rules stuck?
-    // todo guard before sending
-    dispute.token.transfer(awardee, toAccount);
-    dispute.token.transfer(stakeCurateSettings.burner, toBurn);
-    // destroy the disputeSlot information, to trigger refunds
+    uint256 toBurn = award - toAccount;    // destroy the disputeSlot information, to trigger refunds
     disputes[localDisputeId] = DisputeSlot({
       itemId: 0,
       challengerId: 0,
@@ -800,6 +795,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     });
 
     emit Ruling(arbSetting.arbitrator, _disputeId, _ruling);
+    dispute.token.transfer(awardee, toAccount);
+    dispute.token.transfer(stakeCurateSettings.burner, toBurn);
   }
 
   function getItemState(uint64 _itemId) public view returns (ItemState) {
