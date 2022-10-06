@@ -528,30 +528,22 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @dev Starts an item retraction process.
    * @param _itemId Item to retract.
    */
-   // todo fix, this is wrong rn
   function startRetractItem(uint64 _itemId) external {
     Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
     require(account.owner == msg.sender, "Only account owner can invoke account");
+    ItemState state = getItemState(_itemId);
+    require(
+      state != ItemState.IllegalList
+      && state != ItemState.Outdated
+      && state != ItemState.Removed
+      && state != ItemState.Retracted,
+      "Item is already gone"
+    );
     require(item.retractionTimestamp == 0, "Item is already being retracted");
-    require(item.state == ItemState.Included, "Item must be Included");
 
     item.retractionTimestamp = uint32(block.timestamp);
     emit ItemStartRetraction(_itemId);
-  }
-
-  /**
-   * @dev Cancels an ongoing retraction process.
-   * @param _itemId Item to stop retracting.
-   */
-   // todo remove? just recommit to stop retraction?
-  function cancelRetractItem(uint64 _itemId) external {
-    Item storage item = items[_itemId];
-    Account memory account = accounts[item.accountId];
-    require(account.owner == msg.sender, "Only account owner can invoke account");
-    require(getItemState(_itemId) == ItemState.Retracting, "Item is not being retracted");
-    item.retractionTimestamp = 0;
-    emit ItemStopRetraction(_itemId);
   }
 
   /**
