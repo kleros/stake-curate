@@ -33,6 +33,19 @@ contract StakeCurate is IArbitrable, IEvidence {
   enum AdoptionState { FullAdoption, NeedsOutbid }
 
   /**
+   * @dev What happens when an challenge fails on an item you own. Meanings:
+   * Send: Send the challenger stake to the owner
+   * Stake: Automatically deposit the challengerStake
+   * StakeAndRise: Automatically deposit the challengerStake and increase the stake
+   *  of the item.
+   */
+  enum KeepRoutine {
+    Send,
+    Stake,
+    StakeAndRise
+  }
+
+  /**
    * @dev "+" means the state can be stored. Else, is dynamic. Meanings:
    * +Nothing: does not exist yet.
    * Young: item is not considered included, but can be challenged.
@@ -92,7 +105,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     address owner;
     uint32 withdrawingTimestamp;
     // todo count of items owned, for erc-721 visibility
-    // todo bankrun protection #2 preference (receive, stake as free, stake as free and increase item)
+
+    KeepRoutine keepRoutine;
+    uint88 freeSpace;
   }
 
   struct BalanceSplit {
@@ -166,6 +181,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   event AccountStartWithdraw();
   event AccountStopWithdraw();
   event AccountWithdrawn(IERC20 _token, uint32 _freeStake);
+  event AccountChangeKeepRoutine(KeepRoutine _keepRoutine);
 
   event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
 
@@ -276,7 +292,9 @@ contract StakeCurate is IArbitrable, IEvidence {
       accountIdOf[_owner] = id;
       accounts[id] = Account({
         owner: _owner,
-        withdrawingTimestamp: 0
+        withdrawingTimestamp: 0,
+        keepRoutine: KeepRoutine.Send,
+        freeSpace: 0
       });
       emit AccountCreated(_owner);
     }
@@ -359,6 +377,16 @@ contract StakeCurate is IArbitrable, IEvidence {
     // withdraw
     _token.transfer(msg.sender, toSender);
     emit AccountWithdrawn(_token, Cint32.compress(freeStake - _amount));
+  }
+
+  /**
+   * @dev Changes the keep routine (behaviour that occurs to owner when dispute rules to keep)
+   * @param _keepRoutine The routine to set
+   */
+  function setKeepRoutine(KeepRoutine _keepRoutine) external {
+    uint64 accountId = accountRoutine(msg.sender);
+    accounts[accountId].keepRoutine = _keepRoutine;
+    emit AccountChangeKeepRoutine(_keepRoutine);
   }
 
   /**
@@ -732,10 +760,11 @@ contract StakeCurate is IArbitrable, IEvidence {
   function rule(uint256 _disputeId, uint256 _ruling) external override {
     // 1. get slot from dispute
     uint64 localDisputeId = arbitratorAndDisputeIdToLocal[msg.sender][_disputeId];
-    DisputeSlot storage dispute =
+    DisputeSlot memory dispute =
       disputes[localDisputeId];
-    ArbitrationSetting storage arbSetting = arbitrationSettings[dispute.arbitrationSetting];
-    require(msg.sender == address(arbSetting.arbitrator), "Only arbitrator can rule");
+    require(msg.sender == address(
+      arbitrationSettings[dispute.arbitrationSetting].arbitrator
+    ), "Only arbitrator can rule");
     // require above removes the need to require disputeSlot != 0.
     // because disputes[0] has arbitrationSettings[0] which has arbitrator == address(0)
     // and no one will be able to call from address(0)
@@ -748,43 +777,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     arbitratorAndDisputeIdToLocal[msg.sender][_disputeId] = 0;
 
     Item storage item = items[dispute.itemId];
-    Account storage ownerAccount = accounts[dispute.itemOwnerId];
+    Account memory ownerAccount = accounts[dispute.itemOwnerId];
+    List memory list = lists[item.listId];
     uint32 compressedFreeStake = getCompressedFreeStake(dispute.itemOwnerId, dispute.token);
-
-    uint256 award;
-    address awardee;
-    // 3. apply ruling. what to do when refuse to arbitrate?
-    // just default towards keeping the item.
-    // 0 refuse, 1 staker, 2 challenger.
-    if (_ruling == 1 || _ruling == 0) {
-      // staker won.
-      // 4a. return item to used, not disputed.
-      if (item.retractionTimestamp != 0) {
-        item.retractionTimestamp = uint32(block.timestamp);
-      }
-      item.state = ItemState.Included;
-      // if list is not outdated, set commitTimestamp
-      if (getItemState(dispute.itemId) != ItemState.Outdated) {
-        item.commitTimestamp = uint32(block.timestamp);
-      }
-      // free the locked stake
-      uint256 toUnlock = Cint32.decompress(dispute.itemStake);
-      uint256 newFreeStake = Cint32.decompress(compressedFreeStake) + toUnlock;
-      balanceRecordRoutine(item.accountId, address(dispute.token), newFreeStake);
-      
-      award = Cint32.decompress(dispute.challengerStake);
-      awardee = ownerAccount.owner;
-    } else {
-      // challenger won.
-      // 4b. slot is now Removed
-      item.state = ItemState.Removed;
-
-      award = Cint32.decompress(dispute.itemStake);
-      awardee = accounts[dispute.challengerId].owner;
-    }
-
-    uint256 toAccount = award * (10_000 - stakeCurateSettings.burnRate) / 10_000;
-    uint256 toBurn = award - toAccount;    // destroy the disputeSlot information, to trigger refunds
+    
+    // destroy the disputeSlot information, to trigger refunds, and guard from reentrancy.
     disputes[localDisputeId] = DisputeSlot({
       itemId: 0,
       challengerId: 0,
@@ -797,9 +794,71 @@ contract StakeCurate is IArbitrable, IEvidence {
       itemOwnerId: 0
     });
 
-    emit Ruling(arbSetting.arbitrator, _disputeId, _ruling);
-    dispute.token.transfer(awardee, toAccount);
+    // we still remember the original dispute fields.
+
+    // 3. apply ruling. what to do when refuse to arbitrate?
+    // just default towards keeping the item.
+    // 0 refuse, 1 staker, 2 challenger.
+
+    uint256 award = Cint32.decompress(_ruling == 2 ? dispute.itemStake : dispute.challengerStake);
+    uint256 toAccount = award * (10_000 - stakeCurateSettings.burnRate) / 10_000;
+    uint256 toBurn = award - toAccount;
     dispute.token.transfer(stakeCurateSettings.burner, toBurn);
+
+    if (_ruling == 2) {
+      // challenger won
+      item.state = ItemState.Removed;
+      // transfer to challenger
+      dispute.token.transfer(accounts[dispute.challengerId].owner, toAccount);
+    } else {
+      // item owner won.
+      if (item.retractionTimestamp != 0) {
+        item.retractionTimestamp = uint32(block.timestamp);
+      }
+      item.state = ItemState.Included;
+      // if list is not outdated, set commitTimestamp
+      if (item.commitTimestamp > list.versionTimestamp) {
+        item.commitTimestamp = uint32(block.timestamp);
+      }
+      // free the locked stake
+      uint256 newFreeStake = Cint32.decompress(compressedFreeStake) + Cint32.decompress(dispute.itemStake);
+      balanceRecordRoutine(dispute.itemOwnerId, address(dispute.token), newFreeStake);
+
+      // now we go through the keepRoutine.
+      if (ownerAccount.keepRoutine == KeepRoutine.Send) {
+        dispute.token.transfer(ownerAccount.owner, toAccount);
+      } else {
+        // in both Stake and StakeAndRise we will do the following
+        uint256 afterRoutineStake =
+          Cint32.decompress(getCompressedFreeStake(dispute.itemOwnerId, dispute.token))
+          + toAccount;
+        balanceRecordRoutine(dispute.itemOwnerId, address(dispute.token), afterRoutineStake);
+        if (ownerAccount.keepRoutine == KeepRoutine.StakeAndRise) {
+          // attempt to stake extra on the item.
+          uint32 newCompressedItemStake = Cint32.compress(
+            Cint32.decompress(item.stake) + toAccount
+          );
+          // if fail, don't do it. this will fail if:
+          if (
+            // item wont be included after rule (outdated, illegallist...)
+            listLegalCheck(item.listId)
+            || item.commitTimestamp > list.versionTimestamp
+            // the item owner is different from the disputed owner
+            || item.accountId == dispute.itemOwnerId
+            // raising the stake will make it go beyond max
+            || newCompressedItemStake <= list.maxStake
+          ) {
+            item.stake = newCompressedItemStake;
+          }
+        }
+      }
+    }
+
+    emit Ruling(
+      arbitrationSettings[dispute.arbitrationSetting].arbitrator,
+      _disputeId,
+      _ruling
+    );
   }
 
   function getItemState(uint64 _itemId) public view returns (ItemState) {
