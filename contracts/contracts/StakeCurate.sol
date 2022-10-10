@@ -434,7 +434,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     string calldata _ipfsUri,
     bytes calldata _harddata
   ) external returns (uint64 id) {
-    require(listLegalCheck(_listId), "Cannot add item to illegal list");
     uint64 accountId = accountRoutine(msg.sender);
     require(accounts[accountId].withdrawingTimestamp == 0, "Cannot add items while withdrawing");
     unchecked {id = itemCount++;}
