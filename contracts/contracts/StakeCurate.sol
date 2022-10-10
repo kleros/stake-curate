@@ -114,7 +114,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     IERC20 token;
     uint32 challengerStakeRatio; // (basis points) challenger stake in proportion to the item stake
     uint32 ageForInclusion; // how much time from Young to Included, in seconds
-    uint32 freeSpace2;
+    uint32 outbidRate; // how much is needed for a different owner to adopt an item.
   }
 
   struct Item {
@@ -130,7 +130,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 commitTimestamp;
     // how much stake is backing up the item. will be equal or greater than list.requiredStake
     uint32 stake;
-    uint32 freeSpace;
+    uint24 freeSpace;
     // arbitrary, optional data for on-chain consumption
     bytes harddata;
   }
@@ -496,8 +496,10 @@ contract StakeCurate is IArbitrable, IEvidence {
         // it's enough if you match
         require(_stake >= preItem.stake, "Match or increase stake");
       } else {
-        // strict increase
-        require(_stake > preItem.stake, "Increase stake to adopt");
+        // outbidding by rate is required
+        uint256 decompressedCurrentStake = Cint32.decompress(preItem.stake);
+        uint256 neededStake = decompressedCurrentStake  * list.outbidRate / 10_000;
+        require(Cint32.decompress(_stake) >= neededStake, "Cannot adopt without outbid");
       }
     }
 
@@ -577,8 +579,10 @@ contract StakeCurate is IArbitrable, IEvidence {
         // it's enough if you match
         require(_stake >= preItem.stake, "Match or increase stake");
       } else {
-        // strict increase
-        require(_stake > preItem.stake, "Increase stake to adopt");
+        // outbidding by rate is required
+        uint256 decompressedCurrentStake = Cint32.decompress(preItem.stake);
+        uint256 neededStake = decompressedCurrentStake  * list.outbidRate / 10_000;
+        require(Cint32.decompress(_stake) >= neededStake, "Cannot adopt without outbid");
       }
     }
 
@@ -871,6 +875,8 @@ contract StakeCurate is IArbitrable, IEvidence {
         !arbitratorAllowance[arbitrationSettings[list.arbitrationSettingId].arbitrator]
       ) {
         isLegal = false;
+    } else if (list.outbidRate < 10_000) {
+      isLegal = false;
     } else {
       isLegal = true;
     }
