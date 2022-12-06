@@ -160,8 +160,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     // ----
     IERC20 token;
     uint32 challengerStake; // put by the challenger, sent to whoever side wins.
-    uint64 itemOwnerId; // since items may change hands during the dispute, you need to store
+    uint64 itemOwnerId; // items may change hands during the dispute, you need to store
     // the owner at dispute time.
+    // ----
+    uint32 arbFees; // to be awarded to the side that wins the dispute. 
   }
 
   struct ArbitrationSetting {
@@ -221,6 +223,16 @@ contract StakeCurate is IArbitrable, IEvidence {
   mapping(address => mapping(uint256 => uint64)) public arbitratorAndDisputeIdToLocal;
   mapping(uint64 => ArbitrationSetting) public arbitrationSettings;
   mapping(IArbitrator => bool) public arbitratorAllowance;
+
+  /**
+   * @dev This is a hack, you want the loser side to pay for the arbFees
+   *  So you need to keep track of native value amounts from item owner. 
+   *  You need to ensure amounts are sufficient for the optional period.
+   *  So you need balance records. We can reuse balance records for
+   *  values without rewriting code, for that, treat "valueToken" == IERC20(0)
+   *  as the placeholder for native value amounts.
+   */
+  IERC20 constant valueToken = IERC20(address(0)); 
 
   /** 
    * @dev Constructs the StakeCurate contract.
@@ -302,17 +314,24 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   /**
    * @dev Funds an existing account.
+   *  It can receive value as well, that will be stored separatedly.
    * @param _recipient Address of the account that receives the funds.
    * @param _token Token to fund the account with.
    * @param _amount How much token to fund with.
    */
-  function fundAccount(address _recipient, IERC20 _token, uint256 _amount) external {
+  function fundAccount(address _recipient, IERC20 _token, uint256 _amount) external payable {
     require(_token.transferFrom(msg.sender, address(this), _amount), "Fund: transfer failed");
     uint64 accountId = accountRoutine(_recipient);
 
     uint256 newFreeStake = Cint32.decompress(getCompressedFreeStake(accountId, _token)) + _amount;
     balanceRecordRoutine(accountId, address(_token), newFreeStake);
     emit AccountFunded(accountId, _token, Cint32.compress(newFreeStake));
+    // if the sender passes value, we update the value of the accountId
+    if (msg.value > 0) {
+      newFreeStake = Cint32.decompress(getCompressedFreeStake(accountId, valueToken)) + msg.value;
+      balanceRecordRoutine(accountId, address(_token), newFreeStake);
+      emit AccountFunded(accountId, valueToken, Cint32.compress(newFreeStake));
+    }
   }
 
   /**
@@ -371,11 +390,24 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(freeStake >= _amount, "Cannot afford this withdraw");
     // guard
     balanceRecordRoutine(accountId, address(_token), freeStake - _amount);
-    if (toBurn != 0) {
-      _token.transfer(stakeCurateSettings.burner, toBurn);
+
+    // withdraw part.
+    if (_token == valueToken) {
+      // this is native token.
+      // if is their responsability to accept eth.
+      if (toBurn != 0) {
+        payable(stakeCurateSettings.burner).send(toBurn);
+      }
+      payable(msg.sender).send(toSender);
+    } else {
+      // regular token
+      if (toBurn != 0) {
+        _token.transfer(stakeCurateSettings.burner, toBurn);
+      }
+      _token.transfer(msg.sender, toSender);
     }
+    
     // withdraw
-    _token.transfer(msg.sender, toSender);
     emit AccountWithdrawn(_token, Cint32.compress(freeStake - _amount));
   }
 
@@ -664,9 +696,8 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
     // challenger must cover arbitrationCost in value
-    require(msg.value >= arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData),
-      "Not covering the arbitration cost"
-    );
+    uint256 arbFees = arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData);
+    require(msg.value >= arbFees, "Not covering the arbitration cost");
 
     // and challengerStake in allowed tokens. try to get them
     uint256 challengerStake = 
@@ -709,8 +740,16 @@ contract StakeCurate is IArbitrable, IEvidence {
     
     uint256 toLock = Cint32.decompress(item.stake);
     uint256 newFreeStake = Cint32.decompress(compressedFreeStake) - toLock;
+    
+    // we lock some token stake for itemOwner
+    balanceRecordRoutine(item.accountId, address(list.token), newFreeStake);
+    // we also lock value related to the arbFees
+    uint32 valueFreeStake = getCompressedFreeStake(item.accountId, valueToken);
+    uint256 newValueFreeStake = valueFreeStake - arbFees;
+    balanceRecordRoutine(item.accountId, address(valueToken), newValueFreeStake);
+
+    // we keep track of challenger for rewards later
     uint64 challengerId = accountRoutine(msg.sender);
-    balanceRecordRoutine(challengerId, address(list.token), newFreeStake);
 
     disputes[id] = DisputeSlot({
       itemId: _itemId,
@@ -721,7 +760,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       challengerStake: Cint32.compress(challengerStake),
       freespace: 0,
       token: list.token,
-      itemOwnerId: item.accountId
+      itemOwnerId: item.accountId,
+      arbFees: Cint32.compress(arbFees)
     });
 
     emit ItemChallenged(_itemId, _editionTimestamp, _reason);
@@ -780,8 +820,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     Account memory ownerAccount = accounts[dispute.itemOwnerId];
     List memory list = lists[item.listId];
     uint32 compressedFreeStake = getCompressedFreeStake(dispute.itemOwnerId, dispute.token);
+    uint32 compressedValueFreeStake = getCompressedFreeStake(dispute.itemOwnerId, valueToken);
     
     // destroy the disputeSlot information, to trigger refunds, and guard from reentrancy.
+    // todo delete is cleaner code
     disputes[localDisputeId] = DisputeSlot({
       itemId: 0,
       challengerId: 0,
@@ -791,7 +833,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       challengerStake: 0,
       freespace: 0,
       token: IERC20(address(0)),
-      itemOwnerId: 0
+      itemOwnerId: 0,
+      arbFees: 0
     });
 
     // we still remember the original dispute fields.
@@ -810,6 +853,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       item.state = ItemState.Removed;
       // transfer to challenger
       dispute.token.transfer(accounts[dispute.challengerId].owner, toAccount);
+      // return the arbFees to challenger
+      payable(accounts[dispute.challengerId].owner).send(Cint32.decompress(dispute.arbFees));
     } else {
       // item owner won.
       if (item.retractionTimestamp != 0) {
@@ -823,6 +868,9 @@ contract StakeCurate is IArbitrable, IEvidence {
       // free the locked stake
       uint256 newFreeStake = Cint32.decompress(compressedFreeStake) + Cint32.decompress(dispute.itemStake);
       balanceRecordRoutine(dispute.itemOwnerId, address(dispute.token), newFreeStake);
+      // return the arbFees to valueStake
+      uint256 newValueFreeStake = Cint32.decompress(compressedValueFreeStake) + Cint32.decompress(dispute.arbFees);
+      balanceRecordRoutine(dispute.itemOwnerId, address(valueToken), newValueFreeStake);
 
       // now we go through the keepRoutine.
       if (ownerAccount.keepRoutine == KeepRoutine.Send) {
@@ -865,6 +913,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     Item memory item = items[_itemId];
     List memory list = lists[item.listId];
     uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, list.token);
+    uint32 compressedValueFreeStake = getCompressedFreeStake(item.accountId, valueToken);
+    ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
+    // compressions are lossy, rounding down. since it's a liability, comparisons
+    // must be strictly higher.
+    uint32 compressedArbitrationCost =
+      Cint32.compress(arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData));
     if (item.state == ItemState.Disputed) {
       // if item is disputed, no matter if list is illegal, the dispute predominates.
       return (ItemState.Disputed);
@@ -886,11 +940,14 @@ contract StakeCurate is IArbitrable, IEvidence {
       return (ItemState.Retracted);
     } else if (
         // has gone through Withdrawing period,
-        // or not held by the stake
         (
           accounts[item.accountId].withdrawingTimestamp != 0
           && accounts[item.accountId].withdrawingTimestamp <= block.timestamp
         )
+        // not enough to pay arbFees. cost has been rounded down so value must
+        // be strictly higher.
+        || compressedValueFreeStake <= compressedArbitrationCost
+        // or not held by the stake
         || compressedFreeStake < item.stake
     ) {
       return (ItemState.Uncollateralized);
@@ -898,7 +955,10 @@ contract StakeCurate is IArbitrable, IEvidence {
       return (ItemState.Outdated);
     } else if (
         item.commitTimestamp + list.ageForInclusion > block.timestamp
-        || !continuousBalanceCheck(_itemId) 
+        || !continuousBalanceCheck(item.accountId, address(list.token), item.stake, uint32(block.timestamp) - list.ageForInclusion)
+        // we pass +1 here to prevent draining attacks, since a liability is being
+        // rounded down.
+        || !continuousBalanceCheck(item.accountId, address(valueToken), compressedArbitrationCost+1, uint32(block.timestamp) - list.ageForInclusion)
     ) {
       return (ItemState.Young);
     } else {
@@ -980,23 +1040,19 @@ contract StakeCurate is IArbitrable, IEvidence {
     }
   }
 
-  function continuousBalanceCheck(uint64 _itemId) internal view returns (bool) {
-    Item memory item = items[_itemId];
-    List memory list = lists[item.listId];
-    uint32 requiredStake = item.stake;
-    uint256 targetTime = block.timestamp - list.ageForInclusion;
-    uint64 accountId = item.accountId;
-    address token = address(list.token);
-    uint256 splitPointer = splits[accountId][token].length - 1;
+  function continuousBalanceCheck(
+    uint64 _accountId, address _token, uint32 _requiredStake, uint32 _targetTime
+  ) internal view returns (bool) {
+    uint256 splitPointer = splits[_accountId][_token].length - 1;
 
     // we want to process pointer 0, so go until we overflow
     while (splitPointer != type(uint256).max) {
-      BalanceSplit memory split = splits[accountId][token][splitPointer];
+      BalanceSplit memory split = splits[_accountId][_token][splitPointer];
       // we test if we can pass the split.
       // we don't decompress because comparisons work without decompressing
-      if (requiredStake > split.min) return (false);
+      if (_requiredStake > split.min) return (false);
       // we survived, and now check within the split.
-      if (split.startTime <= targetTime) return (true);
+      if (split.startTime <= _targetTime) return (true);
       
       unchecked { splitPointer--; }
     }
