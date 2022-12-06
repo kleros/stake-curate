@@ -823,19 +823,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 compressedValueFreeStake = getCompressedFreeStake(dispute.itemOwnerId, valueToken);
     
     // destroy the disputeSlot information, to trigger refunds, and guard from reentrancy.
-    // todo delete is cleaner code
-    disputes[localDisputeId] = DisputeSlot({
-      itemId: 0,
-      challengerId: 0,
-      arbitrationSetting: 0,
-      state: DisputeState.Free,
-      itemStake: 0,
-      challengerStake: 0,
-      freespace: 0,
-      token: IERC20(address(0)),
-      itemOwnerId: 0,
-      arbFees: 0
-    });
+    delete disputes[localDisputeId];
 
     // we still remember the original dispute fields.
 
