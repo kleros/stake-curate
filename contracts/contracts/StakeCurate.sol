@@ -673,21 +673,28 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @notice Challenge an item, with the intent of removing it and obtaining a reward.
    * @param _itemId Item to challenge.
    * @param _editionTimestamp The challenge is made upon the edition available at this timestamp.
-   * @param _reason IPFS uri containing the evidence for the challenge.
+   * @param _ratio The ratio the challenger is requesting, in basis points,
+   *   this is according to the challenge type the challenger is making, which should
+   *   be compliant with the specification of the List, in the MetaList.
+   *   If it wasn't, the general policy and the evidence display will show the arbitrator
+   *   the need to reject the challenge.
+   * @param _reason IPFS uri containing the evidence for the challenge. It also contains
+   *   the challenge type the challenger is making to justify the passed _ratio.
    */
   function challengeItem(
     uint64 _itemId,
     uint32 _editionTimestamp,
+    uint16 _ratio,
     string calldata _reason
   ) external payable returns (uint64 id) {
     require(
       _editionTimestamp + stakeCurateSettings.challengeWindow >= block.timestamp,
       "Too late to challenge that edition"
     );
+    require(_ratio <= 10_000 && _ratio > 0, "Incorrect ratio");
+
     Item storage item = items[_itemId];
     List memory list = lists[item.listId];
-
-    uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, list.token);
 
     // editions of outdated versions are unincluded and thus cannot be challenged
     // this require covers the edge case: item owner updates before the challenge window
@@ -700,10 +707,9 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(msg.value >= arbFees, "Not covering the arbitration cost");
 
     // and challengerStake in allowed tokens. try to get them
-    uint256 challengerStake = 
-      Cint32.decompress(list.challengerStakeRatio)
-      * Cint32.decompress(item.stake)
-      / 10_000;
+    // note, it doesn't matter the ratio the challenger passes, 
+    uint256 challengerStake = Cint32.decompress(item.stake)
+      * list.challengerStakeRatio / 10_000;
 
     require(
       list.token.transferFrom(
@@ -737,8 +743,10 @@ contract StakeCurate is IArbitrable, IEvidence {
       [address(arbSetting.arbitrator)][arbitratorDisputeId] = id;
 
     item.state = ItemState.Disputed;
+
+    uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, list.token);
     
-    uint256 toLock = Cint32.decompress(item.stake);
+    uint256 toLock = Cint32.decompress(item.stake) * _ratio / 10_000;
     uint256 newFreeStake = Cint32.decompress(compressedFreeStake) - toLock;
     
     // we lock some token stake for itemOwner
@@ -756,7 +764,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       challengerId: challengerId,
       arbitrationSetting: list.arbitrationSettingId,
       state: DisputeState.Used,
-      itemStake: item.stake,
+      itemStake: Cint32.compress(toLock),
       challengerStake: Cint32.compress(challengerStake),
       freespace: 0,
       token: list.token,
@@ -851,6 +859,13 @@ contract StakeCurate is IArbitrable, IEvidence {
       item.state = ItemState.Included;
       // if list is not outdated, set commitTimestamp
       if (item.commitTimestamp > list.versionTimestamp) {
+        // since _ratio was introduced to challenges,
+        // you can no longer make the assumption that the item will become
+        // Young or Included if the list hasn't updated,
+        // as the item owner may have lost more tokens in the process,
+        // and the unlocked tokens are no longer enough by themselves to collateralize.
+        // but it shouldn't be a problem anyway, since it will just become
+        // uncollateralized and unchallengeable.
         item.commitTimestamp = uint32(block.timestamp);
       }
       // free the locked stake
