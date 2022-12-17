@@ -99,6 +99,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     // maximum size, in time, of a balance record. they are kept in order to
     // dynamically find out the age of items.
     uint32 balanceSplitPeriod;
+    // seconds until a challenge reveal can be accepted
+    uint32 minTimeForReveal;
+    // seconds until a challenge commit is too old
+    uint32 maxTimeForReveal;
+    // burn rate that affects some failed challenge reveals before refund
+    // in order to desincentivize camping
+    uint32 smallBurnRate;
   }
 
   struct Account {
@@ -148,6 +155,20 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint24 freeSpace;
     // arbitrary, optional data for on-chain consumption
     bytes harddata;
+  }
+
+  struct ChallengeCommit {
+    // h(salt, itemId, editionTimestamp, ratio, reason)
+    bytes32 commitHash;
+    ///
+    uint32 timestamp;
+    uint32 tokenAmount;
+    uint32 valueAmount;
+    IERC20 token;
+    /// we require a 3rd slot since we index all commits in the same array.
+    // it's still better since less calldata is required to reveal.
+    uint64 challengerId;
+    uint192 freespace;
   }
 
   struct DisputeSlot {
@@ -200,7 +221,20 @@ contract StakeCurate is IArbitrable, IEvidence {
   // no need for event for adopt. new owner can be read from sender.
   // this is the case for Recommit or Edit.
 
-  event ItemChallenged(uint64 _itemId, uint32 _editionTimestamp, string _reason);
+  event ChallengeCommitted(
+    uint256 indexed _commitIndex, bytes32 _commitHash, IERC20 _token,
+    uint32 _tokenAmount, uint32 _valueAmount, uint64 _challengerId
+  );
+
+  event CommitReveal(
+    uint256 indexed _commitIndex, bytes32 _salt, uint64 _itemId,
+    uint32 _editionTimestamp, uint16 _ratio, string _reason
+  );
+
+  // if CommitReveal exists for an index, it was refunded (or small burn). o.w. fully revoked.
+  event CommitRevoked(uint256 indexed _commitIndex);
+  // all info about a challenge can be accessed via the CommitReveal event
+  event ItemChallenged(uint64 indexed _disputeId, uint256 indexed _commitIndex, uint64 indexed _itemId);
 
   // ----- CONTRACT STORAGE -----
   
@@ -219,10 +253,12 @@ contract StakeCurate is IArbitrable, IEvidence {
 
   mapping(uint64 => List) public lists;
   mapping(uint64 => Item) public items;
+  ChallengeCommit[] public challengeCommits;
   mapping(uint64 => DisputeSlot) public disputes;
   mapping(address => mapping(uint256 => uint64)) public arbitratorAndDisputeIdToLocal;
   mapping(uint64 => ArbitrationSetting) public arbitrationSettings;
   mapping(IArbitrator => bool) public arbitratorAllowance;
+
 
   /**
    * @dev This is a hack, you want the loser side to pay for the arbFees
@@ -669,117 +705,205 @@ contract StakeCurate is IArbitrable, IEvidence {
     emit ItemRecommitted(_itemId, _stake);
   }
 
-  /**
-   * @notice Challenge an item, with the intent of removing it and obtaining a reward.
-   * @param _itemId Item to challenge.
-   * @param _editionTimestamp The challenge is made upon the edition available at this timestamp.
-   * @param _ratio The ratio the challenger is requesting, in basis points,
-   *   this is according to the challenge type the challenger is making, which should
-   *   be compliant with the specification of the List, in the MetaList.
-   *   If it wasn't, the general policy and the evidence display will show the arbitrator
-   *   the need to reject the challenge.
-   * @param _reason IPFS uri containing the evidence for the challenge. It also contains
-   *   the challenge type the challenger is making to justify the passed _ratio.
-   */
-  function challengeItem(
+  // since eip-712 is not necessary to build the hash, we won't use it.
+  // this saves the user the process of doing a wallet signature.
+  // even though it's an standard, we don't care about signing.
+  // so we'll use a regular hashing operation to build the _commitHash
+  function commitChallenge(
+    IERC20 _token,
+    uint32 _compressedTokenAmount,
+    bytes32 _commitHash
+  ) external payable returns (uint256 _commitId) {
+    require(
+      _token.transferFrom(
+        msg.sender, address(this), Cint32.decompress(_compressedTokenAmount)
+      ), "Token transfer fail"
+    );
+    uint32 compressedvalue = Cint32.compress(msg.value);
+    uint64 challengerId = accountRoutine(msg.sender);
+    challengeCommits.push(ChallengeCommit({
+      commitHash: _commitHash,
+      timestamp: uint32(block.timestamp),
+      tokenAmount: _compressedTokenAmount,
+      valueAmount: compressedvalue,
+      token: _token,
+      challengerId: challengerId,
+      freespace: 0
+    }));
+    emit ChallengeCommitted(
+      challengeCommits.length - 1, _commitHash, _token, _compressedTokenAmount,
+      compressedvalue, challengerId
+    );
+    return (challengeCommits.length - 1);
+  }
+
+  function revealChallenge(
+    uint256 _commitIndex,
+    bytes32 _salt,
     uint64 _itemId,
     uint32 _editionTimestamp,
     uint16 _ratio,
     string calldata _reason
-  ) external payable returns (uint64 id) {
-    require(
-      _editionTimestamp + stakeCurateSettings.challengeWindow >= block.timestamp,
-      "Too late to challenge that edition"
-    );
+  ) external returns (uint64 id) {
+    ChallengeCommit memory commit = challengeCommits[_commitIndex];
+    delete challengeCommits[_commitIndex];
+
+    require(commit.timestamp + stakeCurateSettings.minTimeForReveal < block.timestamp, "Too early to reveal");
+    require(commit.timestamp + stakeCurateSettings.maxTimeForReveal > block.timestamp, "Too late to reveal");
+
+    // illegal ratios are not allowed, and will result in this commit being revoked eventually.
     require(_ratio <= 10_000 && _ratio > 0, "Incorrect ratio");
 
+    // verify hash here, revert otherwise.
+    bytes32 obtainedHash = keccak256(
+      abi.encodePacked(_salt, _itemId, _editionTimestamp, _ratio, _reason)
+    );
+    require(commit.commitHash == obtainedHash, "Different hash");
+
+    emit CommitReveal(_commitIndex, _salt, _itemId, _editionTimestamp, _ratio, _reason);
+
     Item storage item = items[_itemId];
+    ItemState itemState = getItemState(_itemId);
     List memory list = lists[item.listId];
 
-    // editions of outdated versions are unincluded and thus cannot be challenged
-    // this require covers the edge case: item owner updates before the challenge window
-    // it also protects challenger from malicious list updates snatching the challengerStake
-    require(_editionTimestamp >= list.versionTimestamp, "This edition belongs to an outdated list version");
-
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
-    // challenger must cover arbitrationCost in value
     uint256 arbFees = arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData);
-    require(msg.value >= arbFees, "Not covering the arbitration cost");
 
-    // and challengerStake in allowed tokens. try to get them
-    // note, it doesn't matter the ratio the challenger passes, 
-    uint256 challengerStake = Cint32.decompress(item.stake)
-      * list.challengerStakeRatio / 10_000;
+    uint256 ownerValueAmount = Cint32.decompress(getCompressedFreeStake(item.accountId, valueToken));
+    uint256 ownerTokenAmount = Cint32.decompress(getCompressedFreeStake(item.accountId, list.token));
+    uint256 challengerValueAmount = Cint32.decompress(commit.valueAmount);
+    uint256 challengerTokenAmount = Cint32.decompress(commit.tokenAmount);
 
-    require(
-      list.token.transferFrom(
-        msg.sender,
-        address(this),
-        challengerStake
-      ),
-      "Challenger stake not covered"
-    );
-    
-    // Item can be challenged if: Young, Included
-    ItemState dynamicState = getItemState(_itemId);
-    require(
-      dynamicState == ItemState.Young
-      || dynamicState == ItemState.Included
-    , "Item cannot be challenged");
+    uint256 itemStake = Cint32.decompress(item.stake);
+    uint256 challengerTokenStakeNeeded = itemStake * list.challengerStakeRatio / 10_000;
+    uint256 itemStakeAfterRatio = itemStake * _ratio / 10_000;
+  
+    // go here through all the conditions that would make this challenge
+    // reveal unable to be processed.
+    // there are distinct classes:
 
-    // All requirements met, begin
-    unchecked {id = disputeCount++;}
-
-    // create dispute
-    uint256 arbitratorDisputeId =
-      arbSetting.arbitrator.createDispute{
-        value: msg.value}(
-        RULING_OPTIONS, arbSetting.arbitratorExtraData
+    if (
+      // refund + small burn checks
+      // a. edition timestamp is too early compared to listVersion timestamp.
+      // editions of outdated versions are unincluded and thus cannot be challenged
+      // this also protects challenger from malicious list updates snatching the challengerStake
+      // this has to burn, otherwise self-challengers can camp challenges by using a bogus list
+      _editionTimestamp < list.versionTimestamp
+      // b. illegal list
+      || itemState == ItemState.IllegalList
+    ) {
+      // small burn here
+      address challenger = accounts[commit.challengerId].owner;
+      uint256 award = Cint32.decompress(commit.tokenAmount);
+      uint256 toChallenger = award * (10_000 - stakeCurateSettings.smallBurnRate) / 10_000;
+      commit.token.transfer(stakeCurateSettings.burner, award - toChallenger);
+      commit.token.transfer(challenger, toChallenger);
+      // apply the big burn to the value.
+      uint256 awardValue = Cint32.decompress(commit.valueAmount);
+      uint256 toChallengerValue = awardValue * (10_000 - stakeCurateSettings.smallBurnRate) / 10_000;
+      payable(stakeCurateSettings.burner).send(awardValue - toChallengerValue);
+      payable(challenger).send(toChallengerValue);
+      emit CommitRevoked(_commitIndex);
+    } else if (
+      // full refund checks
+      // a. not enough tokenAmount for item.stake * challengerRatio
+      challengerTokenAmount < challengerTokenStakeNeeded
+      // b. not enough valueAmount for arbitrationCost
+      || challengerValueAmount < arbFees
+      // c. editionTimestamp compared with commit inclusion time is over window.
+      || (_editionTimestamp + stakeCurateSettings.challengeWindow) < commit.timestamp
+      // d. wrong token
+      || commit.token != list.token
+      // e. item is not either Uncollateralized, Young or Included
+      || !(
+        itemState == ItemState.Included
+        || itemState == ItemState.Uncollateralized
+        || itemState == ItemState.Young
+      )
+      // f. owner doesn't have enough value for arbFees
+      || ownerValueAmount < arbFees
+      // g. owner doesn't have enough freeStake for item.stake * ratio
+      || ownerTokenAmount < itemStakeAfterRatio
+    ) {
+      // full refund here
+      address challenger = accounts[commit.challengerId].owner;
+      commit.token.transfer(challenger, challengerTokenAmount);
+      payable(challenger).send(challengerValueAmount);
+      emit CommitRevoked(_commitIndex);
+    } else {
+      // proceed with the challenge
+      unchecked {id = disputeCount++;}
+      // create dispute
+      uint256 arbitratorDisputeId =
+        arbSetting.arbitrator.createDispute{
+          value: arbFees}(
+          RULING_OPTIONS, arbSetting.arbitratorExtraData
+        );
+      // if this reverts, the arbitrator is malfunctioning. the commit will revoke
+      require(
+        arbitratorAndDisputeIdToLocal
+          [address(arbSetting.arbitrator)][arbitratorDisputeId] == 0,
+        "disputeId already in use"
       );
-    require(arbitratorAndDisputeIdToLocal
-      [address(arbSetting.arbitrator)][arbitratorDisputeId] == 0, "disputeId already in use");
+      arbitratorAndDisputeIdToLocal
+        [address(arbSetting.arbitrator)][arbitratorDisputeId] = id;
 
-    arbitratorAndDisputeIdToLocal
-      [address(arbSetting.arbitrator)][arbitratorDisputeId] = id;
+      item.state = ItemState.Disputed;
 
-    item.state = ItemState.Disputed;
+      // we lock the amounts in owner's account
+      balanceRecordRoutine(item.accountId, address(list.token), ownerTokenAmount - itemStakeAfterRatio);
+      balanceRecordRoutine(item.accountId, address(valueToken), ownerValueAmount - arbFees);
 
-    uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, list.token);
-    
-    uint256 toLock = Cint32.decompress(item.stake) * _ratio / 10_000;
-    uint256 newFreeStake = Cint32.decompress(compressedFreeStake) - toLock;
-    
-    // we lock some token stake for itemOwner
-    balanceRecordRoutine(item.accountId, address(list.token), newFreeStake);
-    // we also lock value related to the arbFees
-    uint32 valueFreeStake = getCompressedFreeStake(item.accountId, valueToken);
-    uint256 newValueFreeStake = valueFreeStake - arbFees;
-    balanceRecordRoutine(item.accountId, address(valueToken), newValueFreeStake);
+      // refund leftovers to challenger, in practice leftovers > 0 (due to Cint32 noise)
+      address challenger = accounts[commit.challengerId].owner;
+      commit.token.transfer(challenger, challengerTokenAmount - challengerTokenStakeNeeded);
+      payable(challenger).send(challengerValueAmount - arbFees);
 
-    // we keep track of challenger for rewards later
-    uint64 challengerId = accountRoutine(msg.sender);
+      // store the dispute
+      disputes[id] = DisputeSlot({
+        itemId: _itemId,
+        challengerId: commit.challengerId,
+        arbitrationSetting: list.arbitrationSettingId,
+        state: DisputeState.Used,
+        itemStake: Cint32.compress(itemStakeAfterRatio),
+        challengerStake: Cint32.compress(challengerTokenStakeNeeded),
+        freespace: 0,
+        token: list.token,
+        itemOwnerId: item.accountId,
+        arbFees: Cint32.compress(arbFees)
+      });
 
-    disputes[id] = DisputeSlot({
-      itemId: _itemId,
-      challengerId: challengerId,
-      arbitrationSetting: list.arbitrationSettingId,
-      state: DisputeState.Used,
-      itemStake: Cint32.compress(toLock),
-      challengerStake: Cint32.compress(challengerStake),
-      freespace: 0,
-      token: list.token,
-      itemOwnerId: item.accountId,
-      arbFees: Cint32.compress(arbFees)
-    });
+      emit ItemChallenged(id, _commitIndex, _itemId);
+      // ERC 1497
+      // evidenceGroupId is the itemId, since it's unique per item
+      emit Dispute(
+        arbSetting.arbitrator, arbitratorDisputeId,
+        stakeCurateSettings.currentMetaEvidenceId, _itemId
+      );
+      emit Evidence(arbSetting.arbitrator, _itemId, msg.sender, _reason);
+    }
+  }
 
-    emit ItemChallenged(_itemId, _editionTimestamp, _reason);
-    // ERC 1497
-    // evidenceGroupId is the itemId, since it's unique per item
-    emit Dispute(
-      arbSetting.arbitrator, arbitratorDisputeId,
-      stakeCurateSettings.currentMetaEvidenceId, _itemId
-    );
-    emit Evidence(arbSetting.arbitrator, _itemId, msg.sender, _reason);
+  function revokeCommit(uint256 _commitIndex) external {
+    ChallengeCommit memory commit = challengeCommits[_commitIndex];
+    delete challengeCommits[_commitIndex];
+
+    // since deleting a commit sets its timestamp to zero, in practice they will always
+    // revert here. so, this require is enough.
+    require(commit.timestamp + stakeCurateSettings.maxTimeForReveal < block.timestamp, "Can still be revealed");
+    // apply the big burn to the token amount.
+    uint256 award = Cint32.decompress(commit.tokenAmount);
+    uint256 toChallenger = award * (10_000 - stakeCurateSettings.burnRate) / 10_000;
+    address challenger = accounts[commit.challengerId].owner;
+    commit.token.transfer(stakeCurateSettings.burner, award - toChallenger);
+    commit.token.transfer(challenger, toChallenger);
+    // apply the big burn to the value.
+    uint256 awardValue = Cint32.decompress(commit.valueAmount);
+    uint256 toChallengerValue = awardValue * (10_000 - stakeCurateSettings.burnRate) / 10_000;
+    payable(stakeCurateSettings.burner).send(awardValue - toChallengerValue);
+    payable(challenger).send(toChallengerValue);
+  
+    emit CommitRevoked(_commitIndex);
   }
 
   /**
