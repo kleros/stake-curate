@@ -106,6 +106,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     // burn rate that affects some failed challenge reveals before refund
     // in order to desincentivize camping
     uint32 smallBurnRate;
+    // burn that affects an account when it withdraws. under regular circumstances,
+    // this should just be zero (withdrawals impose no penalty). unfortunately there
+    // is an elaborate botting attack that could ensure a camping challenger only loses
+    // the big burn to secure their stake. in this scenario, setting it to a very small
+    // value (~0.1%) could stop the issue (with honest participants later reimbursed).
+    uint32 withdrawalBurnRate;
   }
 
   struct Account {
@@ -396,54 +402,24 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @dev Withdraws any amount of held token for your account.
    *  calling after withdrawing period entails to a full withdraw.
    *  You can withdraw as many tokens as you want during this period.
-   *  Otherwise, a part of the requested amount will be burnt, to prevent
-   *  frontrunning withdrawal shenanigans against challenge reveals.
    * 
-   *  Flash withdrawals are allowed because, without them, users could
-   *  device ways to submit wrong items in lists and commit self challenges
-   *  to frontrun, exposing them to the same burn.
-   *  todo: actually... in doing so they would have to endure even more,
-   *  as failed challeges have burns associated with them as well, so
-   *  maybe flash withdrawals shouldn't be allowed after all.
+   * There exists a "withdrawalBurnRate" that could be toggled on for
+   *  emergency purposes. But, under any regular circumstance, it should
+   *  just be zero.
    * @param _token Token to withdraw.
    * @param _amount The amount to be withdrawn.
    */
   function withdrawAccount(IERC20 _token, uint256 _amount) external {
     uint64 accountId = accountRoutine(msg.sender);
     Account memory account = accounts[accountId];
-    uint256 toSender;
-    uint256 toBurn = 0;
-    if (account.withdrawingTimestamp <= block.timestamp) {
-      // no burn, since the period was completed.
-      toSender = _amount;
-    } else {
-      // burn. round the burn up.
-      toSender = _amount * (10_000 - stakeCurateSettings.burnRate) / 10_000;
-      toBurn = _amount - toSender;
-    }
+    require(account.withdrawingTimestamp <= block.timestamp, "Cannot withdraw");
 
     uint256 freeStake = Cint32.decompress(getCompressedFreeStake(accountId, _token));
     require(freeStake >= _amount, "Cannot afford this withdraw");
     // guard
     balanceRecordRoutine(accountId, address(_token), freeStake - _amount);
-
-    // withdraw part.
-    if (_token == valueToken) {
-      // this is native token.
-      // if is their responsability to accept eth.
-      if (toBurn != 0) {
-        payable(stakeCurateSettings.burner).send(toBurn);
-      }
-      payable(msg.sender).send(toSender);
-    } else {
-      // regular token
-      if (toBurn != 0) {
-        _token.transfer(stakeCurateSettings.burner, toBurn);
-      }
-      _token.transfer(msg.sender, toSender);
-    }
-    
     // withdraw
+    processWithdrawal(msg.sender, _token, _amount, stakeCurateSettings.withdrawalBurnRate);
     emit AccountWithdrawn(_token, Cint32.compress(freeStake - _amount));
   }
 
@@ -714,6 +690,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint32 _compressedTokenAmount,
     bytes32 _commitHash
   ) external payable returns (uint256 _commitId) {
+    // if attacker tries to pass _token == 0x0, the require below should fail.
     require(
       _token.transferFrom(
         msg.sender, address(this), Cint32.decompress(_compressedTokenAmount)
@@ -794,15 +771,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     ) {
       // small burn here
       address challenger = accounts[commit.challengerId].owner;
-      uint256 award = Cint32.decompress(commit.tokenAmount);
-      uint256 toChallenger = award * (10_000 - stakeCurateSettings.smallBurnRate) / 10_000;
-      commit.token.transfer(stakeCurateSettings.burner, award - toChallenger);
-      commit.token.transfer(challenger, toChallenger);
-      // apply the big burn to the value.
-      uint256 awardValue = Cint32.decompress(commit.valueAmount);
-      uint256 toChallengerValue = awardValue * (10_000 - stakeCurateSettings.smallBurnRate) / 10_000;
-      payable(stakeCurateSettings.burner).send(awardValue - toChallengerValue);
-      payable(challenger).send(toChallengerValue);
+      processWithdrawal(
+        challenger, commit.token, Cint32.decompress(commit.tokenAmount), stakeCurateSettings.smallBurnRate
+      );
+      processWithdrawal(
+        challenger, valueToken, Cint32.decompress(commit.valueAmount), stakeCurateSettings.smallBurnRate
+      );
       emit CommitRevoked(_commitIndex);
     } else if (
       // full refund checks
@@ -891,17 +865,15 @@ contract StakeCurate is IArbitrable, IEvidence {
     // since deleting a commit sets its timestamp to zero, in practice they will always
     // revert here. so, this require is enough.
     require(commit.timestamp + stakeCurateSettings.maxTimeForReveal < block.timestamp, "Can still be revealed");
-    // apply the big burn to the token amount.
-    uint256 award = Cint32.decompress(commit.tokenAmount);
-    uint256 toChallenger = award * (10_000 - stakeCurateSettings.burnRate) / 10_000;
     address challenger = accounts[commit.challengerId].owner;
-    commit.token.transfer(stakeCurateSettings.burner, award - toChallenger);
-    commit.token.transfer(challenger, toChallenger);
+    // apply the big burn to the token amount.
+    processWithdrawal(
+      challenger, commit.token, Cint32.decompress(commit.tokenAmount), stakeCurateSettings.burnRate
+    );
     // apply the big burn to the value.
-    uint256 awardValue = Cint32.decompress(commit.valueAmount);
-    uint256 toChallengerValue = awardValue * (10_000 - stakeCurateSettings.burnRate) / 10_000;
-    payable(stakeCurateSettings.burner).send(awardValue - toChallengerValue);
-    payable(challenger).send(toChallengerValue);
+    processWithdrawal(
+      challenger, valueToken, Cint32.decompress(commit.valueAmount), stakeCurateSettings.burnRate
+    );
   
     emit CommitRevoked(_commitIndex);
   }
@@ -962,17 +934,17 @@ contract StakeCurate is IArbitrable, IEvidence {
     // 3. apply ruling. what to do when refuse to arbitrate?
     // just default towards keeping the item.
     // 0 refuse, 1 staker, 2 challenger.
-
-    uint256 award = Cint32.decompress(_ruling == 2 ? dispute.itemStake : dispute.challengerStake);
-    uint256 toAccount = award * (10_000 - stakeCurateSettings.burnRate) / 10_000;
-    uint256 toBurn = award - toAccount;
-    dispute.token.transfer(stakeCurateSettings.burner, toBurn);
-
+/*
+    
+*/
     if (_ruling == 2) {
       // challenger won
       item.state = ItemState.Removed;
       // transfer to challenger
-      dispute.token.transfer(accounts[dispute.challengerId].owner, toAccount);
+      address challenger = accounts[dispute.challengerId].owner;
+      processWithdrawal(
+        challenger, dispute.token, Cint32.decompress(dispute.itemStake), stakeCurateSettings.burnRate
+      );
       // return the arbFees to challenger
       payable(accounts[dispute.challengerId].owner).send(Cint32.decompress(dispute.arbFees));
     } else {
@@ -998,6 +970,11 @@ contract StakeCurate is IArbitrable, IEvidence {
       // return the arbFees to valueStake
       uint256 newValueFreeStake = Cint32.decompress(compressedValueFreeStake) + Cint32.decompress(dispute.arbFees);
       balanceRecordRoutine(dispute.itemOwnerId, address(valueToken), newValueFreeStake);
+
+      uint256 award = Cint32.decompress(dispute.challengerStake);
+      uint256 toAccount = award * (10_000 - stakeCurateSettings.burnRate) / 10_000;
+      uint256 toBurn = award - toAccount;
+      dispute.token.transfer(stakeCurateSettings.burner, toBurn);
 
       // now we go through the keepRoutine.
       if (ownerAccount.keepRoutine == KeepRoutine.Send) {
@@ -1124,6 +1101,24 @@ contract StakeCurate is IArbitrable, IEvidence {
       isLegal = false;
     } else {
       isLegal = true;
+    }
+  }
+
+  function processWithdrawal(
+    address _beneficiary, IERC20 _token, uint256 _amount, uint32 _burnRate
+  ) internal {
+    uint256 toBeneficiary = _amount * (10_000 - _burnRate) / 10_000;
+    if (_token == valueToken) {
+      // value related withdrawal. it is beneficiary responsability to accept value
+      if (_burnRate != 0) {
+        payable(stakeCurateSettings.burner).send(_amount - toBeneficiary);
+      }
+      payable(_beneficiary).send(_amount);
+    } else {
+      if (_burnRate != 0) {
+        _token.transfer(stakeCurateSettings.burner, _amount - toBeneficiary);
+      }
+      _token.transfer(_beneficiary, toBeneficiary);
     }
   }
 
