@@ -934,9 +934,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // 3. apply ruling. what to do when refuse to arbitrate?
     // just default towards keeping the item.
     // 0 refuse, 1 staker, 2 challenger.
-/*
-    
-*/
+
     if (_ruling == 2) {
       // challenger won
       item.state = ItemState.Removed;
@@ -1042,6 +1040,8 @@ contract StakeCurate is IArbitrable, IEvidence {
         && item.retractionTimestamp + list.retractionPeriod <= block.timestamp
     ) {
       return (ItemState.Retracted);
+    } else if (item.commitTimestamp <= list.versionTimestamp) {
+      return (ItemState.Outdated);
     } else if (
         // has gone through Withdrawing period,
         (
@@ -1055,8 +1055,6 @@ contract StakeCurate is IArbitrable, IEvidence {
         || compressedFreeStake < item.stake
     ) {
       return (ItemState.Uncollateralized);
-    } else if (item.commitTimestamp <= list.versionTimestamp) {
-      return (ItemState.Outdated);
     } else if (
         item.commitTimestamp + list.ageForInclusion > block.timestamp
         || !continuousBalanceCheck(item.accountId, address(list.token), item.stake, uint32(block.timestamp) - list.ageForInclusion)
