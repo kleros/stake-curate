@@ -768,6 +768,11 @@ contract StakeCurate is IArbitrable, IEvidence {
       _editionTimestamp < list.versionTimestamp
       // b. illegal list
       || itemState == ItemState.IllegalList
+      // c. retracted, a well timed sequence of bogus items could trigger these refunds.
+      // when an item becomes retracted is completely predictable and should cause no ux issues.
+      || itemState == ItemState.Retracted
+      // d. a challenge towards an item that doesn't even exist
+      || itemState == ItemState.Nothing
     ) {
       // small burn here
       address challenger = accounts[commit.challengerId].owner;
