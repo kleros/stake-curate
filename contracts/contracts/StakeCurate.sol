@@ -112,6 +112,14 @@ contract StakeCurate is IArbitrable, IEvidence {
     // the big burn to secure their stake. in this scenario, setting it to a very small
     // value (~0.1%) could stop the issue (with honest participants later reimbursed).
     uint32 withdrawalBurnRate;
+    // min seconds for retraction in any list
+    // if a list were to allow having a retractionPeriod that is too low
+    // compared to the minimum time for revealing a commit, that would make
+    // having an item be retracted unpredictable at commit time. 
+    // usually retractions should be in the order of 1 or 2 days,
+    // hours at the bare minimum
+    // and minTimeForReveal should be in the order of minutes
+    uint32 minRetractionPeriod;
   }
 
   struct Account {
@@ -1101,6 +1109,8 @@ contract StakeCurate is IArbitrable, IEvidence {
       ) {
         isLegal = false;
     } else if (list.outbidRate < 10_000) {
+      isLegal = false;
+    } else if (list.retractionPeriod < stakeCurateSettings.minRetractionPeriod) {
       isLegal = false;
     } else {
       isLegal = true;
