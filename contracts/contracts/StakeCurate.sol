@@ -320,7 +320,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     StakeCurateSettings memory _settings,
     string calldata _metaEvidence
   ) external {
-    require(msg.sender == stakeCurateSettings.governor, "Only governor can change these settings");
+    require(msg.sender == stakeCurateSettings.governor);
     // currentMetaEvidenceId must be incremental, so preserve previous one.
     _settings.currentMetaEvidenceId = stakeCurateSettings.currentMetaEvidenceId;
     stakeCurateSettings = _settings;
@@ -337,7 +337,7 @@ contract StakeCurate is IArbitrable, IEvidence {
      @param _allowance Whether if it will be allowed or disallowed
    */
   function allowArbitrator(IArbitrator _arbitrator, bool _allowance) public {
-    require(msg.sender == stakeCurateSettings.governor, "Only governor can allow arbitrators");
+    require(msg.sender == stakeCurateSettings.governor);
     arbitratorAllowance[_arbitrator] = _allowance;
     emit ArbitratorAllowance(_arbitrator, _allowance);
   }
@@ -371,7 +371,7 @@ contract StakeCurate is IArbitrable, IEvidence {
    * @param _amount How much token to fund with.
    */
   function fundAccount(address _recipient, IERC20 _token, uint256 _amount) external payable {
-    require(_token.transferFrom(msg.sender, address(this), _amount), "Fund: transfer failed");
+    require(_token.transferFrom(msg.sender, address(this), _amount));
     uint56 accountId = accountRoutine(_recipient);
 
     uint256 newFreeStake = Cint32.decompress(getCompressedFreeStake(accountId, _token)) + _amount;
@@ -421,10 +421,11 @@ contract StakeCurate is IArbitrable, IEvidence {
   function withdrawAccount(IERC20 _token, uint256 _amount) external {
     uint56 accountId = accountRoutine(msg.sender);
     Account memory account = accounts[accountId];
-    require(account.withdrawingTimestamp <= block.timestamp, "Cannot withdraw");
+    // account needs to start withdrawing process first.
+    require(account.withdrawingTimestamp <= block.timestamp);
 
     uint256 freeStake = Cint32.decompress(getCompressedFreeStake(accountId, _token));
-    require(freeStake >= _amount, "Cannot afford this withdraw");
+    require(freeStake >= _amount); // cannot afford to withdraw that much
     // guard
     balanceRecordRoutine(accountId, address(_token), freeStake - _amount);
     // withdraw
@@ -450,8 +451,10 @@ contract StakeCurate is IArbitrable, IEvidence {
   function createArbitrationSetting(address _arbitrator, bytes calldata _arbitratorExtraData)
       external returns (uint56 id) {
     unchecked {id = arbitrationSettingCount++;}
-    require(_arbitrator != address(0), "Address 0 can't be arbitrator");
-    require(arbitratorAllowance[IArbitrator(_arbitrator)], "Arbitrator not allowed");
+    // address 0 cannot be arbitrator. makes id overflow attacks more expensive.
+    require(_arbitrator != address(0));
+    // arbitrator may be malicious, needs to be allowed.
+    require(arbitratorAllowance[IArbitrator(_arbitrator)]);
     arbitrationSettings[id] = ArbitrationSetting({
       arbitrator: IArbitrator(_arbitrator),
       arbitratorExtraData: _arbitratorExtraData
@@ -470,11 +473,11 @@ contract StakeCurate is IArbitrable, IEvidence {
       List memory _list,
       string calldata _metalist
   ) external returns (uint56 id) {
-    require(_list.arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
+    require(_list.arbitrationSettingId < arbitrationSettingCount);
     unchecked {id = listCount++;}
     _list.governorId = accountRoutine(_governor);
     lists[id] = _list;
-    require(listLegalCheck(id), "Cannot create illegal list");
+    require(listLegalCheck(id));
     emit ListCreated(_list, _metalist);
   }
 
@@ -491,11 +494,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     List memory _list,
     string calldata _metalist
   ) external {
-    require(_list.arbitrationSettingId < arbitrationSettingCount, "ArbitrationSetting must exist");
-    require(accounts[lists[_listId].governorId].owner == msg.sender, "Only governor can update list");
+    require(_list.arbitrationSettingId < arbitrationSettingCount);
+    // only governor can update a list
+    require(accounts[lists[_listId].governorId].owner == msg.sender);
     _list.governorId = accountRoutine(_governor);
     lists[_listId] = _list;
-    require(listLegalCheck(_listId), "Cannot make list illegal");
+    require(listLegalCheck(_listId));
     emit ListUpdated(_listId, _list, _metalist);
   }
 
@@ -516,11 +520,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     bytes calldata _harddata
   ) external returns (uint56 id) {
     uint56 accountId = accountRoutine(msg.sender);
-    require(accounts[accountId].withdrawingTimestamp == 0, "Cannot add items while withdrawing");
+    // vvv this require is redundant due to the getItemState check. todo remove.
+    require(accounts[accountId].withdrawingTimestamp == 0);
     unchecked {id = itemCount++;}
-    require(_forListVersion == lists[_listId].versionTimestamp, "Different list version");
-    require(_stake >= lists[_listId].requiredStake, "Not enough stake");
-    require(_stake <= lists[_listId].maxStake, "Too much stake");
+    require(_forListVersion == lists[_listId].versionTimestamp);
+    require(_stake >= lists[_listId].requiredStake);
+    require(_stake <= lists[_listId].maxStake);
 
     // we create the item, then check if it's valid.
     items[id] = Item({
@@ -535,10 +540,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     });
     // if not Young or Included, something went wrong so it's reverted
     ItemState newState = getItemState(id);
-    require(
-      newState == ItemState.Included || newState == ItemState.Young,
-      "Revert item creation: would be invalid"
-    );
+    require(newState == ItemState.Included || newState == ItemState.Young);
 
     emit ItemAdded(_listId, _stake, _ipfsUri, _harddata);
   }
@@ -561,30 +563,27 @@ contract StakeCurate is IArbitrable, IEvidence {
   ) external {
     Item memory preItem = items[_itemId];
     List memory list = lists[preItem.listId];
-    require(
-      _forListVersion == list.versionTimestamp,
-      "Different list version"
-    );
+    require(_forListVersion == list.versionTimestamp);
     AdoptionState adoption = getAdoptionState(_itemId);
     uint56 senderId = accountRoutine(msg.sender);
 
     if (adoption == AdoptionState.FullAdoption) {
-      require(_stake >= list.requiredStake, "Not enough stake");
+      require(_stake >= list.requiredStake);
     } else {
       // outbidding is needed.
       if (senderId == preItem.accountId) {
         // it's enough if you match
-        require(_stake >= preItem.stake, "Match or increase stake");
+        require(_stake >= preItem.stake);
       } else {
         // outbidding by rate is required
         uint256 decompressedCurrentStake = Cint32.decompress(preItem.stake);
         uint256 neededStake = decompressedCurrentStake  * list.outbidRate / 10_000;
-        require(Cint32.decompress(_stake) >= neededStake, "Cannot adopt without outbid");
+        require(Cint32.decompress(_stake) >= neededStake);
       }
     }
 
-    require(_stake <= list.maxStake, "Too much stake");
-    require(accounts[senderId].withdrawingTimestamp == 0, "Cannot edit items while withdrawing");
+    require(_stake <= list.maxStake);
+    require(accounts[senderId].withdrawingTimestamp == 0);
     
     // instead of further checks, just edit the item and do a status check.
     items[_itemId] = Item({
@@ -601,10 +600,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // you can also edit items while they are Disputed, as that doesn't change
     // anything about the Dispute in place.
     ItemState newState = getItemState(_itemId);
-    require(
-      newState == ItemState.Included || newState == ItemState.Young || newState == ItemState.Disputed,
-      "No edit: would be invalid"
-    );    
+    require(newState == ItemState.Included || newState == ItemState.Young || newState == ItemState.Disputed);    
 
     emit ItemEdited(_itemId, _stake, _ipfsUri, _harddata);
   }
@@ -616,16 +612,15 @@ contract StakeCurate is IArbitrable, IEvidence {
   function startRetractItem(uint56 _itemId) external {
     Item storage item = items[_itemId];
     Account memory account = accounts[item.accountId];
-    require(account.owner == msg.sender, "Only account owner can invoke account");
+    require(account.owner == msg.sender);
     ItemState state = getItemState(_itemId);
     require(
       state != ItemState.IllegalList
       && state != ItemState.Outdated
       && state != ItemState.Removed
-      && state != ItemState.Retracted,
-      "Item is already gone"
+      && state != ItemState.Retracted
     );
-    require(item.retractionTimestamp == 0, "Item is already being retracted");
+    require(item.retractionTimestamp == 0);
 
     item.retractionTimestamp = uint32(block.timestamp);
     emit ItemStartRetraction(_itemId);
@@ -643,31 +638,28 @@ contract StakeCurate is IArbitrable, IEvidence {
   function recommitItem(uint56 _itemId, uint32 _stake, uint32 _forListVersion) external {
     Item memory preItem = items[_itemId];
     List memory list = lists[preItem.listId];
-    require(
-      _forListVersion == list.versionTimestamp,
-      "Different list version"
-    );
+    require(_forListVersion == list.versionTimestamp);
 
     uint56 senderId = accountRoutine(msg.sender);
     AdoptionState adoption = getAdoptionState(_itemId);
 
     if (adoption == AdoptionState.FullAdoption) {
-      require(_stake >= list.requiredStake, "Not enough stake");
+      require(_stake >= list.requiredStake);
     } else {
       // outbidding is needed.
       if (senderId == preItem.accountId) {
         // it's enough if you match
-        require(_stake >= preItem.stake, "Match or increase stake");
+        require(_stake >= preItem.stake);
       } else {
         // outbidding by rate is required
         uint256 decompressedCurrentStake = Cint32.decompress(preItem.stake);
         uint256 neededStake = decompressedCurrentStake  * list.outbidRate / 10_000;
-        require(Cint32.decompress(_stake) >= neededStake, "Cannot adopt without outbid");
+        require(Cint32.decompress(_stake) >= neededStake);
       }
     }
 
-    require(_stake <= list.maxStake, "Too much stake");
-    require(accounts[senderId].withdrawingTimestamp == 0, "Cannot recommit items while withdrawing");
+    require(_stake <= list.maxStake);
+    require(accounts[senderId].withdrawingTimestamp == 0);
 
     // instead of further checks, just change the item and do a status check.
     Item storage item = items[_itemId];
@@ -682,10 +674,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     // you can also edit items while they are Disputed, as that doesn't change
     // anything about the Dispute in place.
     ItemState newState = getItemState(_itemId);
-    require(
-      newState == ItemState.Included || newState == ItemState.Young || newState == ItemState.Disputed,
-      "No recommit: would be invalid"
-    );    
+    require(newState == ItemState.Included || newState == ItemState.Young || newState == ItemState.Disputed);    
 
     emit ItemRecommitted(_itemId, _stake);
   }
@@ -703,7 +692,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     require(
       _token.transferFrom(
         msg.sender, address(this), Cint32.decompress(_compressedTokenAmount)
-      ), "Token transfer fail"
+      )
     );
     uint32 compressedvalue = Cint32.compress(msg.value);
     uint56 challengerId = accountRoutine(msg.sender);
@@ -734,17 +723,17 @@ contract StakeCurate is IArbitrable, IEvidence {
     ChallengeCommit memory commit = challengeCommits[_commitIndex];
     delete challengeCommits[_commitIndex];
 
-    require(commit.timestamp + stakeCurateSettings.minTimeForReveal < block.timestamp, "Too early to reveal");
-    require(commit.timestamp + stakeCurateSettings.maxTimeForReveal > block.timestamp, "Too late to reveal");
+    require(commit.timestamp + stakeCurateSettings.minTimeForReveal < block.timestamp);
+    require(commit.timestamp + stakeCurateSettings.maxTimeForReveal > block.timestamp);
 
     // illegal ratios are not allowed, and will result in this commit being revoked eventually.
-    require(_ratio <= 10_000 && _ratio > 0, "Incorrect ratio");
+    require(_ratio <= 10_000 && _ratio > 0);
 
     // verify hash here, revert otherwise.
     bytes32 obtainedHash = keccak256(
       abi.encodePacked(_salt, _itemId, _editionTimestamp, _ratio, _reason)
     );
-    require(commit.commitHash == obtainedHash, "Different hash");
+    require(commit.commitHash == obtainedHash);
 
     emit CommitReveal(_commitIndex, _salt, _itemId, _editionTimestamp, _ratio, _reason);
 
@@ -828,11 +817,7 @@ contract StakeCurate is IArbitrable, IEvidence {
           RULING_OPTIONS, arbSetting.arbitratorExtraData
         );
       // if this reverts, the arbitrator is malfunctioning. the commit will revoke
-      require(
-        arbitratorAndDisputeIdToLocal
-          [address(arbSetting.arbitrator)][arbitratorDisputeId] == 0,
-        "disputeId already in use"
-      );
+      require(arbitratorAndDisputeIdToLocal[address(arbSetting.arbitrator)][arbitratorDisputeId] == 0);
       arbitratorAndDisputeIdToLocal
         [address(arbSetting.arbitrator)][arbitratorDisputeId] = id;
 
@@ -879,7 +864,7 @@ contract StakeCurate is IArbitrable, IEvidence {
 
     // since deleting a commit sets its timestamp to zero, in practice they will always
     // revert here. so, this require is enough.
-    require(commit.timestamp + stakeCurateSettings.maxTimeForReveal < block.timestamp, "Can still be revealed");
+    require(commit.timestamp + stakeCurateSettings.maxTimeForReveal < block.timestamp);
     address challenger = accounts[commit.challengerId].owner;
     // apply the big burn to the token amount.
     processWithdrawal(
@@ -921,9 +906,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint56 localDisputeId = arbitratorAndDisputeIdToLocal[msg.sender][_disputeId];
     DisputeSlot memory dispute =
       disputes[localDisputeId];
-    require(msg.sender == address(
-      arbitrationSettings[dispute.arbitrationSetting].arbitrator
-    ), "Only arbitrator can rule");
+    require(msg.sender == address(arbitrationSettings[dispute.arbitrationSetting].arbitrator));
     // require above removes the need to require disputeSlot != 0.
     // because disputes[0] has arbitrationSettings[0] which has arbitrator == address(0)
     // and no one will be able to call from address(0)
