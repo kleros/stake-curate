@@ -128,7 +128,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     // todo count of items owned, for erc-721 visibility
 
     KeepRoutine keepRoutine;
-    uint88 freeSpace;
+    uint32 couldWithdrawAt;
+    uint56 freeSpace;
   }
 
   struct BalanceSplit {
@@ -353,12 +354,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     } else {
       id = accountCount++;
       accountIdOf[_owner] = id;
-      accounts[id] = Account({
-        owner: _owner,
-        withdrawingTimestamp: 0,
-        keepRoutine: KeepRoutine.Send,
-        freeSpace: 0
-      });
+      accounts[id].owner = _owner;
       emit AccountCreated(_owner);
     }
   }
@@ -403,7 +399,14 @@ contract StakeCurate is IArbitrable, IEvidence {
    */
   function stopWithdraw() external {
     uint56 accountId = accountRoutine(msg.sender);
+    if (
+      accounts[accountId].withdrawingTimestamp > 0
+      && accounts[accountId].withdrawingTimestamp <= block.timestamp
+    ) {
+      accounts[accountId].couldWithdrawAt = uint32(block.timestamp);
+    }
     accounts[accountId].withdrawingTimestamp = 0;
+
     emit AccountStopWithdraw();
   }
 
@@ -1057,7 +1060,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     ) {
       return (ItemState.Uncollateralized);
     } else if (
-        item.commitTimestamp + list.ageForInclusion > block.timestamp
+        accounts[item.accountId].couldWithdrawAt + list.ageForInclusion > block.timestamp
+        || item.commitTimestamp + list.ageForInclusion > block.timestamp
         || !continuousBalanceCheck(item.accountId, address(list.token), item.stake, uint32(block.timestamp) - list.ageForInclusion)
         // we pass +1 here to prevent draining attacks, since a liability is being
         // rounded down.
