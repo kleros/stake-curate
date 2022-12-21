@@ -422,7 +422,10 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint56 accountId = accountRoutine(msg.sender);
     Account memory account = accounts[accountId];
     // account needs to start withdrawing process first.
-    require(account.withdrawingTimestamp <= block.timestamp);
+    require(
+      account.withdrawingTimestamp > 0
+      && account.withdrawingTimestamp <= block.timestamp
+    );
 
     uint256 freeStake = Cint32.decompress(getCompressedFreeStake(accountId, _token));
     require(freeStake >= _amount); // cannot afford to withdraw that much
