@@ -1059,6 +1059,9 @@ contract StakeCurate is IArbitrable, IEvidence {
         || compressedFreeStake < item.stake
     ) {
       return (ItemState.Uncollateralized);
+    } else if (list.ageForInclusion == 0) {
+      // list opted out of distinguishing "Young" and "Included"
+      return (ItemState.Included);
     } else if (
         accounts[item.accountId].couldWithdrawAt + list.ageForInclusion > block.timestamp
         || item.commitTimestamp + list.ageForInclusion > block.timestamp
