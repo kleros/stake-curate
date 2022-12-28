@@ -33,19 +33,6 @@ contract StakeCurate is IArbitrable, IEvidence {
   enum AdoptionState { FullAdoption, NeedsOutbid }
 
   /**
-   * @dev What happens when an challenge fails on an item you own. Meanings:
-   * Send: Send the challenger stake to the owner
-   * Stake: Automatically deposit the challengerStake
-   * StakeAndRise: Automatically deposit the challengerStake and increase the stake
-   *  of the item.
-   */
-  enum KeepRoutine {
-    Send,
-    Stake,
-    StakeAndRise
-  }
-
-  /**
    * @dev "+" means the state can be stored. Else, is dynamic. Meanings:
    * +Nothing: does not exist yet.
    * Young: item is not considered included, but can be challenged.
@@ -126,10 +113,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     address owner;
     uint32 withdrawingTimestamp;
     // todo count of items owned, for erc-721 visibility
-
-    KeepRoutine keepRoutine;
     uint32 couldWithdrawAt;
-    uint56 freeSpace;
+    uint64 freeSpace;
   }
 
   struct BalanceSplit {
@@ -220,7 +205,6 @@ contract StakeCurate is IArbitrable, IEvidence {
   event AccountStartWithdraw();
   event AccountStopWithdraw();
   event AccountWithdrawn(IERC20 _token, uint32 _freeStake);
-  event AccountChangeKeepRoutine(KeepRoutine _keepRoutine);
 
   event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
 
@@ -437,16 +421,6 @@ contract StakeCurate is IArbitrable, IEvidence {
     // withdraw
     processWithdrawal(msg.sender, _token, _amount, stakeCurateSettings.withdrawalBurnRate);
     emit AccountWithdrawn(_token, Cint32.compress(freeStake - _amount));
-  }
-
-  /**
-   * @dev Changes the keep routine (behaviour that occurs to owner when dispute rules to keep)
-   * @param _keepRoutine The routine to set
-   */
-  function setKeepRoutine(KeepRoutine _keepRoutine) external {
-    uint56 accountId = accountRoutine(msg.sender);
-    accounts[accountId].keepRoutine = _keepRoutine;
-    emit AccountChangeKeepRoutine(_keepRoutine);
   }
 
   /**
@@ -942,7 +916,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     if (_ruling == 2) {
       // challenger won
       item.state = ItemState.Removed;
-      // transfer to challenger
+      // transfer token reward to challenger
       address challenger = accounts[dispute.challengerId].owner;
       processWithdrawal(
         challenger, dispute.token, Cint32.decompress(dispute.itemStake), stakeCurateSettings.burnRate
@@ -972,42 +946,11 @@ contract StakeCurate is IArbitrable, IEvidence {
       // return the arbFees to valueStake
       uint256 newValueFreeStake = Cint32.decompress(compressedValueFreeStake) + Cint32.decompress(dispute.arbFees);
       balanceRecordRoutine(dispute.itemOwnerId, address(valueToken), newValueFreeStake);
-
-      uint256 award = Cint32.decompress(dispute.challengerStake);
-      uint256 toAccount = award * (10_000 - stakeCurateSettings.burnRate) / 10_000;
-      uint256 toBurn = award - toAccount;
-      dispute.token.transfer(stakeCurateSettings.burner, toBurn);
-
-      // now we go through the keepRoutine.
-      if (ownerAccount.keepRoutine == KeepRoutine.Send) {
-        dispute.token.transfer(ownerAccount.owner, toAccount);
-      } else {
-        // in both Stake and StakeAndRise we will do the following
-        uint256 afterRoutineStake =
-          Cint32.decompress(getCompressedFreeStake(dispute.itemOwnerId, dispute.token))
-          + toAccount;
-        balanceRecordRoutine(dispute.itemOwnerId, address(dispute.token), afterRoutineStake);
-        if (ownerAccount.keepRoutine == KeepRoutine.StakeAndRise) {
-          // attempt to stake extra on the item.
-          uint32 newCompressedItemStake = Cint32.compress(
-            Cint32.decompress(item.stake) + toAccount
-          );
-          // if fail, don't do it. this will fail if:
-          if (
-            // item wont be included after rule (outdated, illegallist...)
-            listLegalCheck(item.listId)
-            || item.commitTimestamp > list.versionTimestamp
-            // the item owner is different from the disputed owner
-            || item.accountId == dispute.itemOwnerId
-            // raising the stake will make it go beyond max
-            || newCompressedItemStake <= list.maxStake
-          ) {
-            item.stake = newCompressedItemStake;
-          }
-        }
-      }
+      // send challenger stake as compensation to item owner
+      processWithdrawal(
+        ownerAccount.owner, dispute.token, Cint32.decompress(dispute.challengerStake), stakeCurateSettings.burnRate
+      );
     }
-
     emit Ruling(
       arbitrationSettings[dispute.arbitrationSetting].arbitrator,
       _disputeId,
