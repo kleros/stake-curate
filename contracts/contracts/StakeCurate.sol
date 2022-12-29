@@ -107,6 +107,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     // hours at the bare minimum
     // and minTimeForReveal should be in the order of minutes
     uint32 minRetractionPeriod;
+    // if this amount of time passes since last item commit timestamp,
+    // then the stake that the item is considered to hold is the next one.
+    // otherwise, it's the regular stake.
+    // this was added to prevent item owners to frontrun a stake raise against
+    // a challenge reveal, that would not be able to pass enough tokens and would fail.
+    uint32 timeForNextStake;
   }
 
   struct Account {
@@ -152,8 +158,12 @@ contract StakeCurate is IArbitrable, IEvidence {
     // last explicit committal to collateralize the item.
     uint32 commitTimestamp;
     // how much stake is backing up the item. will be equal or greater than list.requiredStake
-    uint32 stake;
-    uint40 freeSpace;
+    uint32 regularStake;
+    // refer to "getCanonItemStake" to understand how this works, as for why,
+    // tldr: prevent some frontrun attacks related to raising item stakes
+    // the raised item stake will become effective after a period.
+    uint32 nextStake;
+    uint8 freespace;
     // arbitrary, optional data for on-chain consumption
     bytes harddata;
   }
@@ -500,7 +510,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     bytes calldata _harddata
   ) external returns (uint56 id) {
     uint56 accountId = accountRoutine(msg.sender);
-    // vvv this require is redundant due to the getItemState check. todo remove.
+    // this require below is needed, because going through withdrawing doesn't entail uncollateralized
+    // but item additions, editions, or recommits should not be allowed while going through.
     require(accounts[accountId].withdrawingTimestamp == 0);
     unchecked {id = itemCount++;}
     require(_forListVersion == lists[_listId].versionTimestamp);
@@ -514,8 +525,9 @@ contract StakeCurate is IArbitrable, IEvidence {
       retractionTimestamp: 0,
       state: ItemState.Included,
       commitTimestamp: uint32(block.timestamp),
-      stake: _stake,
-      freeSpace: 0,
+      regularStake: _stake,
+      nextStake: _stake,
+      freespace: 0,
       harddata: _harddata
     });
     // if not Young or Included, something went wrong so it's reverted
@@ -552,11 +564,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     } else {
       // outbidding is needed.
       if (senderId == preItem.accountId) {
-        // it's enough if you match
-        require(_stake >= preItem.stake);
+        // if it's just current owner, it's enough if they match
+        require(_stake >= preItem.nextStake);
       } else {
         // outbidding by rate is required
-        uint256 decompressedCurrentStake = Cint32.decompress(preItem.stake);
+        uint256 decompressedCurrentStake = Cint32.decompress(preItem.nextStake);
         uint256 neededStake = decompressedCurrentStake  * list.outbidRate / 10_000;
         require(Cint32.decompress(_stake) >= neededStake);
       }
@@ -572,8 +584,9 @@ contract StakeCurate is IArbitrable, IEvidence {
       retractionTimestamp: 0,
       state: preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Included,
       commitTimestamp: uint32(block.timestamp),
-      stake: _stake,
-      freeSpace: 0,
+      regularStake: adoption == AdoptionState.FullAdoption ? _stake : getCanonItemStake(_itemId),
+      nextStake: _stake,
+      freespace: 0,
       harddata: _harddata
     });
     // if not Young or Included, something went wrong so it's reverted.
@@ -628,11 +641,11 @@ contract StakeCurate is IArbitrable, IEvidence {
     } else {
       // outbidding is needed.
       if (senderId == preItem.accountId) {
-        // it's enough if you match
-        require(_stake >= preItem.stake);
+        // if it's just current owner, it's enough if they match
+        require(_stake >= preItem.nextStake);
       } else {
         // outbidding by rate is required
-        uint256 decompressedCurrentStake = Cint32.decompress(preItem.stake);
+        uint256 decompressedCurrentStake = Cint32.decompress(preItem.nextStake);
         uint256 neededStake = decompressedCurrentStake  * list.outbidRate / 10_000;
         require(Cint32.decompress(_stake) >= neededStake);
       }
@@ -648,7 +661,8 @@ contract StakeCurate is IArbitrable, IEvidence {
     item.retractionTimestamp = 0;
     item.state = preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Included;
     item.commitTimestamp = uint32(block.timestamp);
-    item.stake = _stake;
+    item.regularStake = adoption == AdoptionState.FullAdoption ? _stake : getCanonItemStake(_itemId);
+    item.nextStake = _stake;
 
     // if not Young or Included, something went wrong so it's reverted.
     // you can also edit items while they are Disputed, as that doesn't change
@@ -729,7 +743,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     uint256 challengerValueAmount = Cint32.decompress(commit.valueAmount);
     uint256 challengerTokenAmount = Cint32.decompress(commit.tokenAmount);
 
-    uint256 itemStake = Cint32.decompress(item.stake);
+    uint256 itemStake = Cint32.decompress(getCanonItemStake(_itemId));
     uint256 challengerTokenStakeNeeded = itemStake * list.challengerStakeRatio / 10_000;
     uint256 itemStakeAfterRatio = itemStake * _ratio / 10_000;
   
@@ -763,7 +777,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       emit CommitRevoked(_commitIndex);
     } else if (
       // full refund checks
-      // a. not enough tokenAmount for item.stake * challengerRatio
+      // a. not enough tokenAmount for canonStake * challengerRatio
       challengerTokenAmount < challengerTokenStakeNeeded
       // b. not enough valueAmount for arbitrationCost
       || challengerValueAmount < arbFees
@@ -779,7 +793,7 @@ contract StakeCurate is IArbitrable, IEvidence {
       )
       // f. owner doesn't have enough value for arbFees
       || ownerValueAmount < arbFees
-      // g. owner doesn't have enough freeStake for item.stake * ratio
+      // g. owner doesn't have enough freeStake for canonStake * ratio
       || ownerTokenAmount < itemStakeAfterRatio
     ) {
       // full refund here
@@ -961,6 +975,7 @@ contract StakeCurate is IArbitrable, IEvidence {
   function getItemState(uint56 _itemId) public view returns (ItemState) {
     Item memory item = items[_itemId];
     List memory list = lists[item.listId];
+    uint32 compressedItemStake = getCanonItemStake(_itemId);
     uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, list.token);
     uint32 compressedValueFreeStake = getCompressedFreeStake(item.accountId, valueToken);
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
@@ -999,7 +1014,7 @@ contract StakeCurate is IArbitrable, IEvidence {
         // be strictly higher.
         || compressedValueFreeStake <= compressedArbitrationCost
         // or not held by the stake
-        || compressedFreeStake < item.stake
+        || compressedFreeStake < compressedItemStake
     ) {
       return (ItemState.Uncollateralized);
     } else if (list.ageForInclusion == 0) {
@@ -1008,7 +1023,7 @@ contract StakeCurate is IArbitrable, IEvidence {
     } else if (
         accounts[item.accountId].couldWithdrawAt + list.ageForInclusion > block.timestamp
         || item.commitTimestamp + list.ageForInclusion > block.timestamp
-        || !continuousBalanceCheck(item.accountId, address(list.token), item.stake, uint32(block.timestamp) - list.ageForInclusion)
+        || !continuousBalanceCheck(item.accountId, address(list.token), compressedItemStake, uint32(block.timestamp) - list.ageForInclusion)
         // we pass +1 here to prevent draining attacks, since a liability is being
         // rounded down.
         || !continuousBalanceCheck(item.accountId, address(valueToken), compressedArbitrationCost+1, uint32(block.timestamp) - list.ageForInclusion)
@@ -1025,7 +1040,16 @@ contract StakeCurate is IArbitrable, IEvidence {
     if (state == ItemState.Removed || state == ItemState.Retracted || state == ItemState.Uncollateralized || state == ItemState.Outdated) {
       return (AdoptionState.FullAdoption);
     }
-    return (AdoptionState.NeedsOutbid);
+    // now, we check if current owner can afford the nextStake, explicitly
+    // doesn't matter if this nextStake is not into effect yet. if it's no
+    // longer collateralized then if should be into adoption.
+    Item memory item = items[_itemId];
+    uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, lists[item.listId].token);
+    if (compressedFreeStake < item.nextStake) {
+      return (AdoptionState.FullAdoption);
+    } else {
+      return (AdoptionState.NeedsOutbid);
+    }
   }
 
   function arbitrationCost(uint56 _itemId) external view returns (uint256 cost) {
@@ -1139,5 +1163,13 @@ contract StakeCurate is IArbitrable, IEvidence {
     if (len == 0) return (0);
 
     return (splits[_accountId][address(_token)][len - 1].min);
+  }
+
+  function getCanonItemStake(uint56 _itemId) public view returns (uint32) {
+    if (items[_itemId].commitTimestamp + stakeCurateSettings.timeForNextStake >= block.timestamp) {
+      return (items[_itemId].nextStake);
+    } else {
+      return (items[_itemId].regularStake);
+    }
   }
 }
