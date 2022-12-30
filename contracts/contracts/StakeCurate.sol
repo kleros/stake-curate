@@ -7,10 +7,10 @@
  * SPDX-License-Identifier: Licenses are not real
  */
 
-pragma solidity ^0.8.14;
-import "@kleros/erc-792/contracts/IArbitrable.sol";
-import "@kleros/erc-792/contracts/IArbitrator.sol";
-import "@kleros/erc-792/contracts/erc-1497/IEvidence.sol";
+pragma solidity ^0.8;
+import "./interfaces/IArbitrable.sol";
+import "./interfaces/IArbitrator.sol";
+import "./interfaces/IMetaEvidence.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./Cint32.sol";
 
@@ -22,7 +22,7 @@ import "./Cint32.sol";
  * possible, but many curation needs can be solved by keeping off-chain state availability.
  * This dapp should be reviewed taking the subgraph role into account.
  */
-contract StakeCurate is IArbitrable, IEvidence {
+contract StakeCurate is IArbitrable, IMetaEvidence {
 
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used }
