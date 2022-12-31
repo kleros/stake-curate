@@ -118,7 +118,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   struct Account {
     address owner;
     uint32 withdrawingTimestamp;
-    // todo count of items owned, for erc-721 visibility
     uint32 couldWithdrawAt;
     uint64 freeSpace;
   }
@@ -210,34 +209,49 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   event ChangedStakeCurateSettings(StakeCurateSettings _settings);
   event ArbitratorAllowance(IArbitrator _arbitrator, bool _allowance);
 
-  event AccountCreated(address _owner);
-  event AccountFunded(uint56 _accountId, IERC20 _token, uint32 _freeStake);
-  event AccountStartWithdraw();
-  event AccountStopWithdraw();
-  event AccountWithdrawn(IERC20 _token, uint32 _freeStake);
+  event AccountCreated(uint56 indexed _accountId);
+  // tokens that can possibly hold amounts between [2^255, 2^256-1] will break this offset.
+  event AccountBalanceChange(uint56 indexed _accountId, IERC20 indexed _token, int256 _offset);
+  event AccountStartWithdraw(uint56 indexed _accountId);
+  event AccountStopWithdraw(uint56 indexed _accountId);
 
-  event ArbitrationSettingCreated(address _arbitrator, bytes _arbitratorExtraData);
+  event ArbitrationSettingCreated(uint56 indexed _arbSettingId, address _arbitrator, bytes _arbitratorExtraData);
 
-  event ListCreated(List _list, string _metalist);
-  event ListUpdated(uint56 _listId, List _list, string _metalist);
+  event ListUpdated(uint56 indexed _listId, List _list, string _metalist);
 
-  event ItemAdded(uint56 _listId, uint32 _stake, string _ipfsUri, bytes _harddata);
-  event ItemEdited(uint56 _itemId, uint32 _stake, string _ipfsUri, bytes _harddata);
-  event ItemStartRetraction(uint56 _itemId);
-  event ItemStopRetraction(uint56 _itemId);
+  event ItemAdded(
+    uint56 indexed _itemId,
+    uint56 indexed _listId,
+    uint56 indexed _accountId,
+    uint32 _stake,
+    string _ipfsUri,
+    bytes _harddata
+  );
+
+  event ItemEdited(
+    uint56 indexed _itemId,
+    uint56 indexed _accountId,
+    uint32 _stake,
+    string _ipfsUri,
+    bytes _harddata
+  );
+
+  event ItemStartRetraction(uint56 indexed _itemId);
+  event ItemStopRetraction(uint56 indexed _itemId);
   // there's no need for "ItemRetracted"
   // since it will automatically be considered retracted after the period.
-  event ItemRecommitted(uint56 _itemId, uint32 _stake);
+
+  event ItemRecommitted(uint56 indexed _itemId, uint56 indexed _accountId, uint32 _stake);
   // no need for event for adopt. new owner can be read from sender.
   // this is the case for Recommit or Edit.
 
   event ChallengeCommitted(
-    uint256 indexed _commitIndex, bytes32 _commitHash, IERC20 _token,
-    uint32 _tokenAmount, uint32 _valueAmount, uint56 _challengerId
+    uint256 indexed _commitIndex, uint56 indexed _challengerId,
+    IERC20 _token, uint32 _tokenAmount, uint32 _valueAmount
   );
 
   event CommitReveal(
-    uint256 indexed _commitIndex, bytes32 _salt, uint56 _itemId,
+    uint256 indexed _commitIndex, uint56 indexed _itemId,
     uint32 _editionTimestamp, uint16 _ratio, string _reason
   );
 
@@ -301,7 +315,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     emit StakeCurateCreated();
     emit ChangedStakeCurateSettings(_settings);
     emit MetaEvidence(0, _metaEvidence);
-    emit ArbitrationSettingCreated(address(0), "");
+    emit ArbitrationSettingCreated(0, address(0), "");
   }
 
   // ----- PUBLIC FUNCTIONS -----
@@ -349,7 +363,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       id = accountCount++;
       accountIdOf[_owner] = id;
       accounts[id].owner = _owner;
-      emit AccountCreated(_owner);
+      emit AccountCreated(id);
     }
   }
 
@@ -366,12 +380,13 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
 
     uint256 newFreeStake = Cint32.decompress(getCompressedFreeStake(accountId, _token)) + _amount;
     balanceRecordRoutine(accountId, address(_token), newFreeStake);
-    emit AccountFunded(accountId, _token, Cint32.compress(newFreeStake));
+    // if _amount > 2^255, the _amount below will break and appear negative.
+    emit AccountBalanceChange(accountId, _token, int256(_amount));
     // if the sender passes value, we update the value of the accountId
     if (msg.value > 0) {
       newFreeStake = Cint32.decompress(getCompressedFreeStake(accountId, valueToken)) + msg.value;
       balanceRecordRoutine(accountId, address(_token), newFreeStake);
-      emit AccountFunded(accountId, valueToken, Cint32.compress(newFreeStake));
+      emit AccountBalanceChange(accountId, _token, int256(msg.value));
     }
   }
 
@@ -386,7 +401,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     uint56 accountId = accountRoutine(msg.sender);
     accounts[accountId].withdrawingTimestamp =
       uint32(block.timestamp) + stakeCurateSettings.withdrawalPeriod;
-    emit AccountStartWithdraw();
+    emit AccountStartWithdraw(accountId);
   }
   /**
    * @dev Stops a withdrawal process on your account.
@@ -401,7 +416,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     }
     accounts[accountId].withdrawingTimestamp = 0;
 
-    emit AccountStopWithdraw();
+    emit AccountStopWithdraw(accountId);
   }
 
   /**
@@ -430,7 +445,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     balanceRecordRoutine(accountId, address(_token), freeStake - _amount);
     // withdraw
     processWithdrawal(msg.sender, _token, _amount, stakeCurateSettings.withdrawalBurnRate);
-    emit AccountWithdrawn(_token, Cint32.compress(freeStake - _amount));
+    emit AccountBalanceChange(accountId, _token, -int256(_amount));
   }
 
   /**
@@ -449,7 +464,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       arbitrator: IArbitrator(_arbitrator),
       arbitratorExtraData: _arbitratorExtraData
     });
-    emit ArbitrationSettingCreated(_arbitrator, _arbitratorExtraData);
+    emit ArbitrationSettingCreated(id, _arbitrator, _arbitratorExtraData);
   }
 
   /**
@@ -468,7 +483,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     _list.governorId = accountRoutine(_governor);
     lists[id] = _list;
     require(listLegalCheck(id));
-    emit ListCreated(_list, _metalist);
+    emit ListUpdated(id, _list, _metalist);
   }
 
   /**
@@ -534,7 +549,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     ItemState newState = getItemState(id);
     require(newState == ItemState.Included || newState == ItemState.Young);
 
-    emit ItemAdded(_listId, _stake, _ipfsUri, _harddata);
+    emit ItemAdded(id, _listId, accountId, _stake, _ipfsUri, _harddata);
   }
 
   /**
@@ -595,7 +610,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     ItemState newState = getItemState(_itemId);
     require(newState == ItemState.Included || newState == ItemState.Young || newState == ItemState.Disputed);    
 
-    emit ItemEdited(_itemId, _stake, _ipfsUri, _harddata);
+    emit ItemEdited(_itemId, senderId, _stake, _ipfsUri, _harddata);
   }
 
   /**
@@ -670,7 +685,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     ItemState newState = getItemState(_itemId);
     require(newState == ItemState.Included || newState == ItemState.Young || newState == ItemState.Disputed);    
 
-    emit ItemRecommitted(_itemId, _stake);
+    emit ItemRecommitted(_itemId, senderId, _stake);
   }
 
   // since eip-712 is not necessary to build the hash, we won't use it.
@@ -700,8 +715,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       freespace: 0
     }));
     emit ChallengeCommitted(
-      challengeCommits.length - 1, _commitHash, _token, _compressedTokenAmount,
-      compressedvalue, challengerId
+      challengeCommits.length - 1, challengerId, _token,
+      _compressedTokenAmount, compressedvalue
     );
     return (challengeCommits.length - 1);
   }
@@ -729,7 +744,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     );
     require(commit.commitHash == obtainedHash);
 
-    emit CommitReveal(_commitIndex, _salt, _itemId, _editionTimestamp, _ratio, _reason);
+    emit CommitReveal(_commitIndex, _itemId, _editionTimestamp, _ratio, _reason);
 
     Item storage item = items[_itemId];
     ItemState itemState = getItemState(_itemId);
@@ -885,7 +900,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
    * to render evidence properly.
    * @param _evidence IPFS uri linking to the evidence.
    */
-   // todo refactor to support Resolver evidence interface?
   function submitEvidence(uint56 _itemId, IArbitrator _arbitrator, string calldata _evidence) external {
     emit Evidence(_arbitrator, _itemId, msg.sender, _evidence);
   }
