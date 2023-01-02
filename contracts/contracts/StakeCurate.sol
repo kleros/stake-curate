@@ -52,7 +52,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     Included,
     Disputed,
     Removed,
-    IllegalList,
     Uncollateralized,
     Outdated,
     Retracted
@@ -60,59 +59,14 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
 
   uint256 internal constant RULING_OPTIONS = 2;
 
-  /// @dev Makes SLOADs trigger hot accesses more often.
   struct StakeCurateSettings {
-    // can change these settings
-    address governor;
-    // to be able to withdraw freeStake after init
-    uint32 withdrawalPeriod;
-    // span of time granted to challenger to reference previous editions
-    // check its usage in challengeItem and the general policy to understand its role
-    uint32 challengeWindow;
-    uint32 currentMetaEvidenceId;
-    // --- 2nd slot
-    // prevents relevant historical balance checks from being too long
-    uint32 maxAgeForInclusion;
-    
-    // minimum challengerStake/requiredStake ratio, in basis points
-    uint32 minChallengerStakeRatio;
-    // burn rate in basis points. applied in "flash withdrawals",
-    // requiredStakes on good challenge, challengerStake in bad challenge.
-    uint32 burnRate;
     // receives the burns, could be an actual burn address like address(0)
     // could alternatively act as some kind of public goods funding, or rent.
     address burner;
-    // --- 3rd slot
-    // maximum size, in time, of a balance record. they are kept in order to
-    // dynamically find out the age of items.
-    uint32 balanceSplitPeriod;
-    // seconds until a challenge reveal can be accepted
-    uint32 minTimeForReveal;
-    // seconds until a challenge commit is too old
-    uint32 maxTimeForReveal;
-    // burn rate that affects some failed challenge reveals before refund
-    // in order to desincentivize camping
-    uint32 smallBurnRate;
-    // burn that affects an account when it withdraws. under regular circumstances,
-    // this should just be zero (withdrawals impose no penalty). unfortunately there
-    // is an elaborate botting attack that could ensure a camping challenger only loses
-    // the big burn to secure their stake. in this scenario, setting it to a very small
-    // value (~0.1%) could stop the issue (with honest participants later reimbursed).
-    uint32 withdrawalBurnRate;
-    // min seconds for retraction in any list
-    // if a list were to allow having a retractionPeriod that is too low
-    // compared to the minimum time for revealing a commit, that would make
-    // having an item be retracted unpredictable at commit time. 
-    // usually retractions should be in the order of 1 or 2 days,
-    // hours at the bare minimum
-    // and minTimeForReveal should be in the order of minutes
-    uint32 minRetractionPeriod;
-    // if this amount of time passes since last item commit timestamp,
-    // then the stake that the item is considered to hold is the next one.
-    // otherwise, it's the regular stake.
-    // this was added to prevent item owners to frontrun a stake raise against
-    // a challenge reveal, that would not be able to pass enough tokens and would fail.
-    uint32 timeForNextStake;
+    uint32 currentMetaEvidenceId;
+    // --- 2nd slot
+    // can change the burner and the governor
+    address governor;
   }
 
   struct Account {
@@ -260,6 +214,39 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   // all info about a challenge can be accessed via the CommitReveal event
   event ItemChallenged(uint56 indexed _disputeId, uint256 indexed _commitIndex, uint56 indexed _itemId);
 
+  // ----- CONSTANTS -----
+
+  // these used to be variable settings, but due to edge cases they would cause
+  // to previous lists if minimums were increased, or maximum decreased,
+  // they were chosen to be constants instead.
+
+  uint16 public constant MIN_CHALLENGER_STAKE_RATIO = 3_333; // 33%
+  uint16 public constant BURN_RATE = 500; // 5%
+
+  // prevents relevant historical balance checks from being too long
+  uint32 public constant MAX_AGE_FOR_INCLUSION = 40 days;
+  // min seconds for retraction in any list
+  // if a list were to allow having a retractionPeriod that is too low
+  // compared to the minimum time for revealing a commit, that would make
+  // having an item be retracted unpredictable at commit time. 
+  uint32 public constant MIN_RETRACTION_PERIOD = 1 days;
+  uint32 public constant WITHDRAWAL_PERIOD = 7 days;
+
+  // maximum size, in time, of a balance record. they are kept in order to
+  // dynamically find out the age of items.
+  uint32 public constant BALANCE_SPLIT_PERIOD = 6 hours;
+
+  // span of time granted to challenger to reference previous editions
+  // check its usage in challengeItem and the general policy to understand its role
+  // todo since commit reveal, should be removed
+  uint32 public constant CHALLENGE_WINDOW = 5 minutes;
+
+  // seconds until a challenge reveal can be accepted
+  uint32 public constant MIN_TIME_FOR_REVEAL = 15 minutes;
+  // seconds until a challenge commit is too old
+  // this is also the amount of time it takes for an item to be held by the nextStake
+  uint32 public constant MAX_TIME_FOR_REVEAL = 4 hours;
+
   // ----- CONTRACT STORAGE -----
   
   StakeCurateSettings public stakeCurateSettings;
@@ -386,7 +373,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   function startWithdraw() external {
     uint56 accountId = accountRoutine(msg.sender);
     accounts[accountId].withdrawingTimestamp =
-      uint32(block.timestamp) + stakeCurateSettings.withdrawalPeriod;
+      uint32(block.timestamp) + WITHDRAWAL_PERIOD;
     emit AccountStartWithdraw(accountId);
   }
   /**
@@ -430,7 +417,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     // guard
     balanceRecordRoutine(accountId, address(_token), freeStake - _amount);
     // withdraw
-    processWithdrawal(msg.sender, _token, _amount, stakeCurateSettings.withdrawalBurnRate);
+    processWithdrawal(msg.sender, _token, _amount, 0);
     emit AccountBalanceChange(accountId, _token, -int256(_amount));
   }
 
@@ -463,10 +450,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       string calldata _metalist
   ) external returns (uint56 id) {
     require(_list.arbitrationSettingId < arbitrationSettingCount);
+    require(_list.outbidRate >= 10_000);
     unchecked {id = listCount++;}
     _list.governorId = accountRoutine(_governor);
     lists[id] = _list;
-    require(listLegalCheck(id));
     emit ListUpdated(id, _list, _metalist);
   }
 
@@ -484,11 +471,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     string calldata _metalist
   ) external {
     require(_list.arbitrationSettingId < arbitrationSettingCount);
+    require(_list.outbidRate >= 10_000);
     // only governor can update a list
     require(accounts[lists[_listId].governorId].owner == msg.sender);
     _list.governorId = accountRoutine(_governor);
     lists[_listId] = _list;
-    require(listLegalCheck(_listId));
     emit ListUpdated(_listId, _list, _metalist);
   }
 
@@ -607,8 +594,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     require(account.owner == msg.sender);
     ItemState state = getItemState(_itemId);
     require(
-      state != ItemState.IllegalList
-      && state != ItemState.Outdated
+      state != ItemState.Outdated
       && state != ItemState.Removed
       && state != ItemState.Retracted
     );
@@ -716,8 +702,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     ChallengeCommit memory commit = challengeCommits[_commitIndex];
     delete challengeCommits[_commitIndex];
 
-    require(commit.timestamp + stakeCurateSettings.minTimeForReveal < block.timestamp);
-    require(commit.timestamp + stakeCurateSettings.maxTimeForReveal > block.timestamp);
+    require(commit.timestamp + MIN_TIME_FOR_REVEAL < block.timestamp);
+    require(commit.timestamp + MAX_TIME_FOR_REVEAL > block.timestamp);
 
     // illegal ratios are not allowed, and will result in this commit being revoked eventually.
     require(_ratio <= 10_000 && _ratio > 0);
@@ -736,7 +722,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
 
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
     uint256 arbFees = arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData);
-    uint256 valueBurn = arbFees * stakeCurateSettings.burnRate / 10_000;
+    uint256 valueBurn = arbFees * BURN_RATE / 10_000;
 
     uint256 ownerValueAmount = Cint32.decompress(getCompressedFreeStake(item.accountId, valueToken));
     uint256 ownerTokenAmount = Cint32.decompress(getCompressedFreeStake(item.accountId, list.token));
@@ -757,22 +743,22 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       // editions of outdated versions are unincluded and thus cannot be challenged
       // this also protects challenger from malicious list updates snatching the challengerStake
       // this has to burn, otherwise self-challengers can camp challenges by using a bogus list
+      // honest participants could become affected by this if unlucky, or interacting with
+      // malicious list, they should ask for a refund then.
       _editionTimestamp < list.versionTimestamp
-      // b. illegal list
-      || itemState == ItemState.IllegalList
-      // c. retracted, a well timed sequence of bogus items could trigger these refunds.
+      // b. retracted, a well timed sequence of bogus items could trigger these refunds.
       // when an item becomes retracted is completely predictable and should cause no ux issues.
       || itemState == ItemState.Retracted
-      // d. a challenge towards an item that doesn't even exist
+      // c. a challenge towards an item that doesn't even exist
       || itemState == ItemState.Nothing
     ) {
-      // small burn here
+      // burn here
       address challenger = accounts[commit.challengerId].owner;
       processWithdrawal(
-        challenger, commit.token, Cint32.decompress(commit.tokenAmount), stakeCurateSettings.smallBurnRate
+        challenger, commit.token, Cint32.decompress(commit.tokenAmount), BURN_RATE
       );
       processWithdrawal(
-        challenger, valueToken, Cint32.decompress(commit.valueAmount), stakeCurateSettings.smallBurnRate
+        challenger, valueToken, Cint32.decompress(commit.valueAmount), BURN_RATE
       );
       emit CommitRevoked(_commitIndex);
     } else if (
@@ -782,7 +768,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       // b. not enough valueAmount for arbitrationCost
       || challengerValueAmount < (arbFees + valueBurn)
       // c. editionTimestamp compared with commit inclusion time is over window.
-      || (_editionTimestamp + stakeCurateSettings.challengeWindow) < commit.timestamp
+      || (_editionTimestamp + CHALLENGE_WINDOW) < commit.timestamp
       // d. wrong token
       || commit.token != list.token
       // e. item is not either Uncollateralized, Young or Included
@@ -862,16 +848,12 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
 
     // since deleting a commit sets its timestamp to zero, in practice they will always
     // revert here. so, this require is enough.
-    require(commit.timestamp + stakeCurateSettings.maxTimeForReveal < block.timestamp);
+    require(commit.timestamp + MAX_TIME_FOR_REVEAL < block.timestamp);
     address challenger = accounts[commit.challengerId].owner;
     // apply the big burn to the token amount.
-    processWithdrawal(
-      challenger, commit.token, Cint32.decompress(commit.tokenAmount), stakeCurateSettings.burnRate
-    );
+    processWithdrawal(challenger, commit.token, Cint32.decompress(commit.tokenAmount), BURN_RATE);
     // apply the big burn to the value.
-    processWithdrawal(
-      challenger, valueToken, Cint32.decompress(commit.valueAmount), stakeCurateSettings.burnRate
-    );
+    processWithdrawal(challenger, valueToken, Cint32.decompress(commit.valueAmount), BURN_RATE);
   
     emit CommitRevoked(_commitIndex);
   }
@@ -935,9 +917,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       item.state = ItemState.Removed;
       // transfer token reward to challenger
       address challenger = accounts[dispute.challengerId].owner;
-      processWithdrawal(
-        challenger, dispute.token, Cint32.decompress(dispute.itemStake), stakeCurateSettings.burnRate
-      );
+      processWithdrawal(challenger, dispute.token, Cint32.decompress(dispute.itemStake), BURN_RATE);
       // return the valueStake to challenger
       payable(accounts[dispute.challengerId].owner).send(Cint32.decompress(dispute.valueStake));
     } else {
@@ -964,9 +944,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       uint256 newValueFreeStake = Cint32.decompress(compressedValueFreeStake) + Cint32.decompress(dispute.valueStake);
       balanceRecordRoutine(dispute.itemOwnerId, address(valueToken), newValueFreeStake);
       // send challenger stake as compensation to item owner
-      processWithdrawal(
-        ownerAccount.owner, dispute.token, Cint32.decompress(dispute.challengerStake), stakeCurateSettings.burnRate
-      );
+      processWithdrawal(ownerAccount.owner, dispute.token, Cint32.decompress(dispute.challengerStake), BURN_RATE);
     }
     emit Ruling(
       arbitrationSettings[dispute.arbitrationSetting].arbitrator,
@@ -986,15 +964,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
     uint256 valueNeeded =
       arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData)
-      * stakeCurateSettings.burnRate / 10_000;
+      * BURN_RATE / 10_000;
 
     if (item.state == ItemState.Disputed) {
       // if item is disputed, no matter if list is illegal, the dispute predominates.
       return (ItemState.Disputed);
-    } else if (!listLegalCheck(item.listId)) {
-      // list legality is then checked, to prevent meaningful interaction
-      // with illegal lists.
-      return (ItemState.IllegalList);
     } else if (
         item.state == ItemState.Removed
         || item.state == ItemState.Nothing
@@ -1054,23 +1028,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     }
   }
 
-  function listLegalCheck(uint56 _listId) public view returns (bool isLegal) {
-    List memory list = lists[_listId];
-    if (list.ageForInclusion > stakeCurateSettings.maxAgeForInclusion) {
-      isLegal = false;
-    } else if (
-      list.challengerStakeRatio < stakeCurateSettings.minChallengerStakeRatio
-    ) {
-      isLegal = false;
-    } else if (list.outbidRate < 10_000) {
-      isLegal = false;
-    } else if (list.retractionPeriod < stakeCurateSettings.minRetractionPeriod) {
-      isLegal = false;
-    } else {
-      isLegal = true;
-    }
-  }
-
   function processWithdrawal(
     address _beneficiary, IERC20 _token, uint256 _amount, uint32 _burnRate
   ) internal {
@@ -1110,7 +1067,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
         }));
     } else {
       // since it's higher, check last record time to consider appending.
-      if (block.timestamp >= curr.startTime + stakeCurateSettings.balanceSplitPeriod) {
+      if (block.timestamp >= curr.startTime + BALANCE_SPLIT_PERIOD) {
         // out of the period. a new split will be made.
         splits[_accountId][_token].push(BalanceSplit({
           startTime: uint32(block.timestamp),
@@ -1158,7 +1115,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   }
 
   function getCanonItemStake(uint56 _itemId) public view returns (uint32) {
-    if (items[_itemId].commitTimestamp + stakeCurateSettings.timeForNextStake >= block.timestamp) {
+    if (items[_itemId].commitTimestamp + MAX_TIME_FOR_REVEAL >= block.timestamp) {
       return (items[_itemId].nextStake);
     } else {
       return (items[_itemId].regularStake);
