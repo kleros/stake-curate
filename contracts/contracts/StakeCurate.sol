@@ -281,7 +281,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   mapping(uint56 => DisputeSlot) public disputes;
   mapping(address => mapping(uint256 => uint56)) public arbitratorAndDisputeIdToLocal;
   mapping(uint56 => ArbitrationSetting) public arbitrationSettings;
-  mapping(IArbitrator => bool) public arbitratorAllowance;
 
 
   /**
@@ -336,19 +335,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     emit ChangedStakeCurateSettings(_settings);
     stakeCurateSettings.currentMetaEvidenceId++;
     emit MetaEvidence(stakeCurateSettings.currentMetaEvidenceId, _metaEvidence);
-  }
-
-  /**
-   * @dev Governor allows or disallows arbitrator to be used in Stake Curate.
-   *  This is intended to prevent harmful use or arbitrators (bad periods, no arbFees...)
-   *  and it should prevent a bunch of attacks, since stakes are shared across lists.
-     @param _arbitrator The arbitrator to allow / disallow
-     @param _allowance Whether if it will be allowed or disallowed
-   */
-  function allowArbitrator(IArbitrator _arbitrator, bool _allowance) public {
-    require(msg.sender == stakeCurateSettings.governor);
-    arbitratorAllowance[_arbitrator] = _allowance;
-    emit ArbitratorAllowance(_arbitrator, _allowance);
   }
 
   /**
@@ -458,8 +444,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     unchecked {id = arbitrationSettingCount++;}
     // address 0 cannot be arbitrator. makes id overflow attacks more expensive.
     require(_arbitrator != address(0));
-    // arbitrator may be malicious, needs to be allowed.
-    require(arbitratorAllowance[IArbitrator(_arbitrator)]);
     arbitrationSettings[id] = ArbitrationSetting({
       arbitrator: IArbitrator(_arbitrator),
       arbitratorExtraData: _arbitratorExtraData
@@ -1078,10 +1062,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       list.challengerStakeRatio < stakeCurateSettings.minChallengerStakeRatio
     ) {
       isLegal = false;
-    } else if (
-        !arbitratorAllowance[arbitrationSettings[list.arbitrationSettingId].arbitrator]
-      ) {
-        isLegal = false;
     } else if (list.outbidRate < 10_000) {
       isLegal = false;
     } else if (list.retractionPeriod < stakeCurateSettings.minRetractionPeriod) {
