@@ -187,7 +187,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     uint56 arbitrationSetting;
     DisputeState state;
     uint32 itemStake; // unlocks to submitter if Keep, sent to challenger if Remove
-    uint32 arbFees; // to be awarded to the side that wins the dispute. 
+    uint32 valueStake; // to be awarded to the side that wins the dispute. 
     uint16 freespace;
     // ----
     IERC20 token;
@@ -752,6 +752,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
 
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
     uint256 arbFees = arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData);
+    uint256 valueBurn = arbFees * stakeCurateSettings.burnRate / 10_000;
 
     uint256 ownerValueAmount = Cint32.decompress(getCompressedFreeStake(item.accountId, valueToken));
     uint256 ownerTokenAmount = Cint32.decompress(getCompressedFreeStake(item.accountId, list.token));
@@ -795,7 +796,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       // a. not enough tokenAmount for canonStake * challengerRatio
       challengerTokenAmount < challengerTokenStakeNeeded
       // b. not enough valueAmount for arbitrationCost
-      || challengerValueAmount < arbFees
+      || challengerValueAmount < (arbFees + valueBurn)
       // c. editionTimestamp compared with commit inclusion time is over window.
       || (_editionTimestamp + stakeCurateSettings.challengeWindow) < commit.timestamp
       // d. wrong token
@@ -807,7 +808,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
         || itemState == ItemState.Young
       )
       // f. owner doesn't have enough value for arbFees
-      || ownerValueAmount < arbFees
+      || ownerValueAmount < (arbFees + valueBurn)
       // g. owner doesn't have enough freeStake for canonStake * ratio
       || ownerTokenAmount < itemStakeAfterRatio
     ) {
@@ -819,6 +820,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     } else {
       // proceed with the challenge
       unchecked {id = disputeCount++;}
+
       // create dispute
       uint256 arbitratorDisputeId =
         arbSetting.arbitrator.createDispute{
@@ -834,12 +836,15 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
 
       // we lock the amounts in owner's account
       balanceRecordRoutine(item.accountId, address(list.token), ownerTokenAmount - itemStakeAfterRatio);
-      balanceRecordRoutine(item.accountId, address(valueToken), ownerValueAmount - arbFees);
+      balanceRecordRoutine(item.accountId, address(valueToken), ownerValueAmount - arbFees - valueBurn);
+
+      // we send the burned value to burner
+      payable(stakeCurateSettings.burner).send(valueBurn);
 
       // refund leftovers to challenger, in practice leftovers > 0 (due to Cint32 noise)
       address challenger = accounts[commit.challengerId].owner;
       commit.token.transfer(challenger, challengerTokenAmount - challengerTokenStakeNeeded);
-      payable(challenger).send(challengerValueAmount - arbFees);
+      payable(challenger).send(challengerValueAmount - arbFees - valueBurn);
 
       // store the dispute
       disputes[id] = DisputeSlot({
@@ -848,11 +853,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
         arbitrationSetting: list.arbitrationSettingId,
         state: DisputeState.Used,
         itemStake: Cint32.compress(itemStakeAfterRatio),
-        challengerStake: Cint32.compress(challengerTokenStakeNeeded),
+        valueStake: Cint32.compress(arbFees + valueBurn),
         freespace: 0,
         token: list.token,
+        challengerStake: Cint32.compress(challengerTokenStakeNeeded),
         itemOwnerId: item.accountId,
-        arbFees: Cint32.compress(arbFees),
         freespace2: 0
       });
 
@@ -949,8 +954,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       processWithdrawal(
         challenger, dispute.token, Cint32.decompress(dispute.itemStake), stakeCurateSettings.burnRate
       );
-      // return the arbFees to challenger
-      payable(accounts[dispute.challengerId].owner).send(Cint32.decompress(dispute.arbFees));
+      // return the valueStake to challenger
+      payable(accounts[dispute.challengerId].owner).send(Cint32.decompress(dispute.valueStake));
     } else {
       // item owner won.
       if (item.retractionTimestamp != 0) {
@@ -971,8 +976,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       // free the locked stake
       uint256 newFreeStake = Cint32.decompress(compressedFreeStake) + Cint32.decompress(dispute.itemStake);
       balanceRecordRoutine(dispute.itemOwnerId, address(dispute.token), newFreeStake);
-      // return the arbFees to valueStake
-      uint256 newValueFreeStake = Cint32.decompress(compressedValueFreeStake) + Cint32.decompress(dispute.arbFees);
+      // return the value to the item owner
+      uint256 newValueFreeStake = Cint32.decompress(compressedValueFreeStake) + Cint32.decompress(dispute.valueStake);
       balanceRecordRoutine(dispute.itemOwnerId, address(valueToken), newValueFreeStake);
       // send challenger stake as compensation to item owner
       processWithdrawal(
@@ -991,12 +996,14 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     List memory list = lists[item.listId];
     uint32 compressedItemStake = getCanonItemStake(_itemId);
     uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, list.token);
-    uint32 compressedValueFreeStake = getCompressedFreeStake(item.accountId, valueToken);
+    uint256 valueFreeStake = Cint32.decompress(getCompressedFreeStake(item.accountId, valueToken));
+
+
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
-    // compressions are lossy, rounding down. since it's a liability, comparisons
-    // must be strictly higher.
-    uint32 compressedArbitrationCost =
-      Cint32.compress(arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData));
+    uint256 valueNeeded =
+      arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData)
+      * stakeCurateSettings.burnRate / 10_000;
+
     if (item.state == ItemState.Disputed) {
       // if item is disputed, no matter if list is illegal, the dispute predominates.
       return (ItemState.Disputed);
@@ -1024,9 +1031,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
           accounts[item.accountId].withdrawingTimestamp != 0
           && accounts[item.accountId].withdrawingTimestamp <= block.timestamp
         )
-        // not enough to pay arbFees. cost has been rounded down so value must
-        // be strictly higher.
-        || compressedValueFreeStake <= compressedArbitrationCost
+        // not enough to pay arbFees + burn
+        || valueFreeStake < valueNeeded
         // or not held by the stake
         || compressedFreeStake < compressedItemStake
     ) {
@@ -1038,9 +1044,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
         accounts[item.accountId].couldWithdrawAt + list.ageForInclusion > block.timestamp
         || item.commitTimestamp + list.ageForInclusion > block.timestamp
         || !continuousBalanceCheck(item.accountId, address(list.token), compressedItemStake, uint32(block.timestamp) - list.ageForInclusion)
-        // we pass +1 here to prevent draining attacks, since a liability is being
-        // rounded down.
-        || !continuousBalanceCheck(item.accountId, address(valueToken), compressedArbitrationCost+1, uint32(block.timestamp) - list.ageForInclusion)
+        || !continuousBalanceCheck(item.accountId, address(valueToken), Cint32.compress(valueNeeded), uint32(block.timestamp) - list.ageForInclusion)
     ) {
       return (ItemState.Young);
     } else {
@@ -1064,12 +1068,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     } else {
       return (AdoptionState.NeedsOutbid);
     }
-  }
-
-  function arbitrationCost(uint56 _itemId) external view returns (uint256 cost) {
-    ArbitrationSetting memory setting =
-      arbitrationSettings[lists[items[_itemId].listId].arbitrationSettingId];
-    return (setting.arbitrator.arbitrationCost(setting.arbitratorExtraData));
   }
 
   function listLegalCheck(uint56 _listId) public view returns (bool isLegal) {
