@@ -117,6 +117,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     // the raised item stake will become effective after a period.
     uint32 nextStake;
     uint8 freespace;
+    // ---
+    // last time item went from unchallengeable to challengeable
+    uint32 liveSince;
+    uint224 freespace2;
     // arbitrary, optional data for on-chain consumption
     bytes harddata;
   }
@@ -132,7 +136,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     /// we require a 3rd slot since we index all commits in the same array.
     // it's still better since less calldata is required to reveal.
     uint56 challengerId;
-    uint200 freespace;
+    uint32 editionTimestamp;
+    uint168 freespace;
   }
 
   struct DisputeSlot {
@@ -201,12 +206,13 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
 
   event ChallengeCommitted(
     uint256 indexed _commitIndex, uint56 indexed _challengerId,
-    IERC20 _token, uint32 _tokenAmount, uint32 _valueAmount
+    IERC20 _token, uint32 _tokenAmount, uint32 _valueAmount,
+    uint32 _editionTimestamp
   );
 
   event CommitReveal(
     uint256 indexed _commitIndex, uint56 indexed _itemId,
-    uint32 _editionTimestamp, uint16 _ratio, string _reason
+    uint16 _ratio, string _reason
   );
 
   // if CommitReveal exists for an index, it was refunded (or small burn). o.w. fully revoked.
@@ -237,9 +243,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   uint32 public constant BALANCE_SPLIT_PERIOD = 6 hours;
 
   // span of time granted to challenger to reference previous editions
-  // check its usage in challengeItem and the general policy to understand its role
-  // todo since commit reveal, should be removed
-  uint32 public constant CHALLENGE_WINDOW = 5 minutes;
+  uint32 public constant CHALLENGE_WINDOW = 2 minutes;
 
   // seconds until a challenge reveal can be accepted
   uint32 public constant MIN_TIME_FOR_REVEAL = 15 minutes;
@@ -514,6 +518,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       regularStake: _stake,
       nextStake: _stake,
       freespace: 0,
+      liveSince: uint32(block.timestamp),
+      freespace2: 0,
       harddata: _harddata
     });
     // if not Young or Included, something went wrong so it's reverted
@@ -573,6 +579,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       regularStake: adoption == AdoptionState.FullAdoption ? _stake : getCanonItemStake(_itemId),
       nextStake: _stake,
       freespace: 0,
+      liveSince: adoption == AdoptionState.FullAdoption ? uint32(block.timestamp) : preItem.liveSince,
+      freespace2: 0,
       harddata: _harddata
     });
     // if not Young or Included, something went wrong so it's reverted.
@@ -648,6 +656,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     item.commitTimestamp = uint32(block.timestamp);
     item.regularStake = adoption == AdoptionState.FullAdoption ? _stake : getCanonItemStake(_itemId);
     item.nextStake = _stake;
+    if (adoption == AdoptionState.FullAdoption) {
+      // we do it like this, because we don't need to load this slot otherwise.
+      item.liveSince = uint32(block.timestamp);
+    }
 
     // if not Young or Included, something went wrong so it's reverted.
     // you can also edit items while they are Disputed, as that doesn't change
@@ -665,6 +677,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   function commitChallenge(
     IERC20 _token,
     uint32 _compressedTokenAmount,
+    uint32 _editionTimestamp,
     bytes32 _commitHash
   ) external payable returns (uint256 _commitId) {
     // if attacker tries to pass _token == 0x0, the require below should fail.
@@ -673,6 +686,9 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
         msg.sender, address(this), Cint32.decompress(_compressedTokenAmount)
       )
     );
+    // if this transaction is mined too late, revert
+    // if _editionTimestamp is over the block.timestamp, it will overflow and revert.
+    require((block.timestamp - _editionTimestamp) <= CHALLENGE_WINDOW);
     uint32 compressedvalue = Cint32.compress(msg.value);
     uint56 challengerId = accountRoutine(msg.sender);
     challengeCommits.push(ChallengeCommit({
@@ -682,11 +698,12 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       valueAmount: compressedvalue,
       token: _token,
       challengerId: challengerId,
+      editionTimestamp: _editionTimestamp,
       freespace: 0
     }));
     emit ChallengeCommitted(
       challengeCommits.length - 1, challengerId, _token,
-      _compressedTokenAmount, compressedvalue
+      _compressedTokenAmount, compressedvalue, _editionTimestamp
     );
     return (challengeCommits.length - 1);
   }
@@ -695,7 +712,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     uint256 _commitIndex,
     bytes32 _salt,
     uint56 _itemId,
-    uint32 _editionTimestamp,
     uint16 _ratio,
     string calldata _reason
   ) external returns (uint56 id) {
@@ -710,11 +726,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
 
     // verify hash here, revert otherwise.
     bytes32 obtainedHash = keccak256(
-      abi.encodePacked(_salt, _itemId, _editionTimestamp, _ratio, _reason)
+      abi.encodePacked(_salt, _itemId, _ratio, _reason)
     );
     require(commit.commitHash == obtainedHash);
 
-    emit CommitReveal(_commitIndex, _itemId, _editionTimestamp, _ratio, _reason);
+    emit CommitReveal(_commitIndex, _itemId, _ratio, _reason);
 
     Item storage item = items[_itemId];
     ItemState itemState = getItemState(_itemId);
@@ -745,12 +761,16 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       // this has to burn, otherwise self-challengers can camp challenges by using a bogus list
       // honest participants could become affected by this if unlucky, or interacting with
       // malicious list, they should ask for a refund then.
-      _editionTimestamp < list.versionTimestamp
+      commit.editionTimestamp < list.versionTimestamp
       // b. retracted, a well timed sequence of bogus items could trigger these refunds.
       // when an item becomes retracted is completely predictable and should cause no ux issues.
       || itemState == ItemState.Retracted
       // c. a challenge towards an item that doesn't even exist
       || itemState == ItemState.Nothing
+      // d. a challenge towards an item that has been removed
+      // a sniper controlling the arbitrator could otherwise conditionally
+      // remove or keep an item on bogus lists, allowing themselves to trigger refunds.
+      || itemState == ItemState.Removed
     ) {
       // burn here
       address challenger = accounts[commit.challengerId].owner;
@@ -767,8 +787,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       challengerTokenAmount < challengerTokenStakeNeeded
       // b. not enough valueAmount for arbitrationCost
       || challengerValueAmount < (arbFees + valueBurn)
-      // c. editionTimestamp compared with commit inclusion time is over window.
-      || (_editionTimestamp + CHALLENGE_WINDOW) < commit.timestamp
+      // c. the item went from unincluded to included after the targeted edition
+      || commit.editionTimestamp < item.liveSince
       // d. wrong token
       || commit.token != list.token
       // e. item is not either Uncollateralized, Young or Included
