@@ -16,9 +16,9 @@ Provides a button that links to The List, which is a list of lists intended to a
 Contains panels as described below. Panels can be collapsed and expanded.
 
 **Basic Info Panel**: Renders some basic information about the List: Name, description, link to the policy, minimum amount (both in tokens and value) to submit items.
-It shows you the *challenge types* there are accepted for removing items in this registry. A challenge type contains a title, a short description, a ratio (the % of the item stake the challenger will obtain as reward), and should be clarified in the List Policy. If the List doesn't enable this setting, then this stays hidden. (This means, there's only 1 challenge type of "Incorrect Item", that takes 100% of the item stake as a reward.)
+It shows you the *challenge types* there are accepted for removing items in this registry. A challenge type contains a title, a short description, a ratio (the % of the item stake the challenger will obtain as reward), and should be clarified in the List Policy. If the List doesn't enable this setting, then this stays hidden. (This means, there's only 1 challenge type of "Incorrect Item", that takes 100% of the item stake as a reward.) It also features a button that spawns a **Create Item** modal.
 
-**Template Panel**: It shows you the fields that items are expected to have within this list. Clicking on "Create <itemname>" will change those fields into a form, for the user to fill. Query parameters can be used to prefill these fields (e.g. `/list/4?mode=submit&name=Dorothy`) which is useful to integrate faster with other apps.
+**Create Item Modal**: This is a form, for the user to fill. Query parameters can be used to prefill these fields (e.g. `/list/4?mode=submit&name=Dorothy`) which is useful to integrate faster with other apps. Every field corresponds to a row. They contain the field name, a field description you can read by hovering, and an input field. To the right, there's some extra space to fit a ✔️ or ❌.
 
 According to the field types, the form will render errors if incorrect data is put in. Unless all mandatory fields are correctly filled, the "Submit" button will stay greyed out.
 
@@ -63,8 +63,6 @@ If the item is challengeable, at the bottom, you can see how many tokens could y
 If there are incorrect fields, that is, fields that do not correspond with the list version contemporary to the edition, a warning is shown besides them.
 If there are mandatory missing fields, show a warning listing the missing fields.
 
-
-
 Buttons may be shown in the top right corner: a "Refresh" button, and an "Edit" button.
 
 Refresh simply calls the function `recommitItem`. For simple users, this should only show if the item has been Removed, Retracted, is Outdated, Uncollateralized, etc. Advanced users may want to use this to raise the stakes, so they would need to be able to input token amounts.
@@ -75,7 +73,7 @@ This button shows at all times, even if the item was Removed, or even if the Ite
 
 Edit changes how the Panel functions, and now renders fields that can be edited. It will automatically hide incorrect fields from view. It starts with the previous values prefilled by default. It will render unfilled, optional fields as well. There is a "Next" button below, that will be greyed out until all mandatory fields are properly filled in without errors. Query parameters can be used to prefill an edit (`/item/52?mode=edit&name=Mark`).
 
-Clicking "Next" will let you see the changes, it will only show what fields have changed, and then you can click "Confirm Edit" to finally Edit the item. Just like with Refresh, advanced users may want to use this to raise the stakes.
+Clicking "Next" will let you see the changes, it will only show what fields have changed. If circumstances make it so that the account requires staking more value and tokens in order to take ownership of the item, the button is replaced by a staking button. If already enough, you can click "Confirm Edit" to finally Edit the item. Just like with Refresh, advanced users may want to use this to raise the stakes. But let's implement the UX support when it's actually needed.
 
 **Challenge Panel**: The required stakes to challenge the item are shown. They are expressed in ETH and in the needed ERC20 tokens.
 
