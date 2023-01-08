@@ -82,7 +82,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     address owner;
     uint32 withdrawingTimestamp;
     uint32 couldWithdrawAt;
-    uint64 freeSpace;
+    uint32 freespace;
   }
 
   struct BalanceSplit {
@@ -518,7 +518,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       regularStake: _stake,
       nextStake: _stake,
       freespace: 0,
-      liveSince: uint32(block.timestamp),
+      liveSince: 0,
       freespace2: 0,
       harddata: _harddata
     });
