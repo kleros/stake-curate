@@ -11,6 +11,7 @@ pragma solidity ^0.8;
 import "./interfaces/IArbitrable.sol";
 import "./interfaces/IArbitrator.sol";
 import "./interfaces/IMetaEvidence.sol";
+import "./interfaces/ISimpleEvidence.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./Cint32.sol";
 
@@ -22,7 +23,7 @@ import "./Cint32.sol";
  * possible, but many curation needs can be solved by keeping off-chain state availability.
  * This dapp should be reviewed taking the subgraph role into account.
  */
-contract StakeCurate is IArbitrable, IMetaEvidence {
+contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
 
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used }
@@ -876,18 +877,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   /**
    * @dev Submits evidence to potentially any dispute or item.
    * @param _itemId Id of the item to submit evidence to.
-   * @param _arbitrator The arbitrator to submit evidence to. This is needed because:
-   * 1. it's not possible to obtain the dispute from an item
-   * 2. the item may be currently ruled by a different arbitrator than the one
-   * its list it's pointing to
-   * 3. the item may not even be in a dispute (so, just use the arbitrator in the list)
-   * ---
-   * Anyhow, the subgraph will be ignoring this parameter. It's kept to allow arbitrators
-   * to render evidence properly.
    * @param _evidence IPFS uri linking to the evidence.
    */
-  function submitEvidence(uint56 _itemId, IArbitrator _arbitrator, string calldata _evidence) external {
-    emit Evidence(_arbitrator, _itemId, msg.sender, _evidence);
+  function submitEvidence(uint56 _itemId, string calldata _evidence) external {
+    emit Evidence(_itemId, _evidence);
   }
 
   /**
