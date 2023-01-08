@@ -27,7 +27,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used }
   /**
-   * @dev "Adoption" pretty much means "you can / cannot edit or recommit".
+   * @dev "Adoption" pretty much means "you can / cannot edit or refresh".
    *  To avoid redundancy, this applies either if new owner is different or not.
    */
   enum AdoptionState { FullAdoption, NeedsOutbid }
@@ -43,7 +43,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
    * * interaction is purposedly discouraged.
    * Uncollateralized: owner doesn't have enough collateral,
    * * also triggers if owner can withdraw.
-   * Outdated: item was committed before the last list version.
+   * Outdated: item was last updated before the last list version.
    * Retracted: owner made it go through the retraction period.
    */
   enum ItemState {
@@ -109,7 +109,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     // hard state of the item, some states can be written in storage.
     ItemState state;
     // last explicit committal to collateralize the item.
-    uint32 commitTimestamp;
+    uint32 lastUpdated;
     // how much stake is backing up the item. will be equal or greater than list.requiredStake
     uint32 regularStake;
     // refer to "getCanonItemStake" to understand how this works, as for why,
@@ -126,15 +126,14 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   }
 
   struct ChallengeCommit {
-    // h(salt, itemId, editionTimestamp, ratio, reason)
+    // h(salt, itemId, ratio, reason)
     bytes32 commitHash;
     ///
     uint32 timestamp;
     uint32 tokenAmount;
     uint32 valueAmount;
     IERC20 token;
-    /// we require a 3rd slot since we index all commits in the same array.
-    // it's still better since less calldata is required to reveal.
+    ///
     uint56 challengerId;
     uint32 editionTimestamp;
     uint168 freespace;
@@ -195,14 +194,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     bytes _harddata
   );
 
+  event ItemRefreshed(uint56 indexed _itemId, uint56 indexed _accountId, uint32 _stake);
+
   event ItemStartRetraction(uint56 indexed _itemId);
   event ItemStopRetraction(uint56 indexed _itemId);
-  // there's no need for "ItemRetracted"
-  // since it will automatically be considered retracted after the period.
-
-  event ItemRecommitted(uint56 indexed _itemId, uint56 indexed _accountId, uint32 _stake);
-  // no need for event for adopt. new owner can be read from sender.
-  // this is the case for Recommit or Edit.
 
   event ChallengeCommitted(
     uint256 indexed _commitIndex, uint56 indexed _challengerId,
@@ -215,7 +210,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     uint16 _ratio, string _reason
   );
 
-  // if CommitReveal exists for an index, it was refunded (or small burn). o.w. fully revoked.
+  // if CommitReveal exists for an index, it was refunded (or burned). o.w. fully revoked.
   event CommitRevoked(uint256 indexed _commitIndex);
   // all info about a challenge can be accessed via the CommitReveal event
   event ItemChallenged(uint56 indexed _disputeId, uint256 indexed _commitIndex, uint56 indexed _itemId);
@@ -501,7 +496,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   ) external returns (uint56 id) {
     uint56 accountId = accountRoutine(msg.sender);
     // this require below is needed, because going through withdrawing doesn't entail uncollateralized
-    // but item additions, editions, or recommits should not be allowed while going through.
+    // but item additions or updates should not be allowed while going through.
     require(accounts[accountId].withdrawingTimestamp == 0);
     unchecked {id = itemCount++;}
     require(_forListVersion == lists[_listId].versionTimestamp);
@@ -514,7 +509,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       listId: _listId,
       retractionTimestamp: 0,
       state: ItemState.Included,
-      commitTimestamp: uint32(block.timestamp),
+      lastUpdated: uint32(block.timestamp),
       regularStake: _stake,
       nextStake: _stake,
       freespace: 0,
@@ -575,7 +570,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       listId: preItem.listId,
       retractionTimestamp: 0,
       state: preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Included,
-      commitTimestamp: uint32(block.timestamp),
+      lastUpdated: uint32(block.timestamp),
       regularStake: adoption == AdoptionState.FullAdoption ? _stake : getCanonItemStake(_itemId),
       nextStake: _stake,
       freespace: 0,
@@ -613,15 +608,15 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   }
 
   /**
-   * @dev Updates commit timestamp of an item. It also reclaims the item if
+   * @dev Updates lastUpdated timestamp of an item. It also reclaims the item if
    * sender is different from previous owner, according to adoption rules.
-   * The difference with editItem is that recommitItem doesn't create a new edition.
-   * @param _itemId Item to recommit.
+   * The difference with editItem is that refreshItem doesn't create a new edition.
+   * @param _itemId Item to refresh.
    * @param _stake How much collateral backs up the item, compressed.
    * @param _forListVersion Timestamp of the version this action is intended for.
    * If list governor were to frontrun a version change, then it reverts.
    */
-  function recommitItem(uint56 _itemId, uint32 _stake, uint32 _forListVersion) external {
+  function refreshItem(uint56 _itemId, uint32 _stake, uint32 _forListVersion) external {
     Item memory preItem = items[_itemId];
     List memory list = lists[preItem.listId];
     require(_forListVersion == list.versionTimestamp);
@@ -649,11 +644,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
 
     // instead of further checks, just change the item and do a status check.
     Item storage item = items[_itemId];
-    // to recommit, we change values directly to avoid "rebuilding" the harddata
+    // to refresh, we change values directly to avoid "rebuilding" the harddata
     item.accountId = senderId;
     item.retractionTimestamp = 0;
     item.state = preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Included;
-    item.commitTimestamp = uint32(block.timestamp);
+    item.lastUpdated = uint32(block.timestamp);
     item.regularStake = adoption == AdoptionState.FullAdoption ? _stake : getCanonItemStake(_itemId);
     item.nextStake = _stake;
     if (adoption == AdoptionState.FullAdoption) {
@@ -667,7 +662,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     ItemState newState = getItemState(_itemId);
     require(newState == ItemState.Included || newState == ItemState.Young || newState == ItemState.Disputed);    
 
-    emit ItemRecommitted(_itemId, senderId, _stake);
+    emit ItemRefreshed(_itemId, senderId, _stake);
   }
 
   // since eip-712 is not necessary to build the hash, we won't use it.
@@ -946,8 +941,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
         item.retractionTimestamp = uint32(block.timestamp);
       }
       item.state = ItemState.Included;
-      // if list is not outdated, set commitTimestamp
-      if (item.commitTimestamp > list.versionTimestamp) {
+      // if list is not outdated, set lastUpdated
+      if (item.lastUpdated > list.versionTimestamp) {
         // since _ratio was introduced to challenges,
         // you can no longer make the assumption that the item will become
         // Young or Included if the list hasn't updated,
@@ -955,7 +950,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
         // and the unlocked tokens are no longer enough by themselves to collateralize.
         // but it shouldn't be a problem anyway, since it will just become
         // uncollateralized and unchallengeable.
-        item.commitTimestamp = uint32(block.timestamp);
+        item.lastUpdated = uint32(block.timestamp);
       }
       // free the locked stake
       uint256 newFreeStake = Cint32.decompress(compressedFreeStake) + Cint32.decompress(dispute.itemStake);
@@ -1001,7 +996,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
         && item.retractionTimestamp + list.retractionPeriod <= block.timestamp
     ) {
       return (ItemState.Retracted);
-    } else if (item.commitTimestamp <= list.versionTimestamp) {
+    } else if (item.lastUpdated <= list.versionTimestamp) {
       return (ItemState.Outdated);
     } else if (
         // has gone through Withdrawing period,
@@ -1020,7 +1015,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
       return (ItemState.Included);
     } else if (
         accounts[item.accountId].couldWithdrawAt + list.ageForInclusion > block.timestamp
-        || item.commitTimestamp + list.ageForInclusion > block.timestamp
+        || item.lastUpdated + list.ageForInclusion > block.timestamp
         || !continuousBalanceCheck(item.accountId, address(list.token), compressedItemStake, uint32(block.timestamp) - list.ageForInclusion)
         || !continuousBalanceCheck(item.accountId, address(valueToken), Cint32.compress(valueNeeded), uint32(block.timestamp) - list.ageForInclusion)
     ) {
@@ -1030,7 +1025,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
     }
   }
 
-  // even though it's "Adoption", this is also an umbrella term for "recommitting"
   function getAdoptionState(uint56 _itemId) public view returns (AdoptionState) {
     ItemState state = getItemState(_itemId);
     if (state == ItemState.Removed || state == ItemState.Retracted || state == ItemState.Uncollateralized || state == ItemState.Outdated) {
@@ -1135,7 +1129,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   }
 
   function getCanonItemStake(uint56 _itemId) public view returns (uint32) {
-    if (items[_itemId].commitTimestamp + MAX_TIME_FOR_REVEAL >= block.timestamp) {
+    if (items[_itemId].lastUpdated + MAX_TIME_FOR_REVEAL >= block.timestamp) {
       return (items[_itemId].nextStake);
     } else {
       return (items[_itemId].regularStake);
