@@ -3,7 +3,6 @@
 pragma solidity ^0.8.0;
 
 import "./IArbitrator.sol";
-import "./IEvidence.sol";
 
 /** @title IMetaEvidence
  *  Inspired in ERC-1497: Evidence Standard

@@ -36,8 +36,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
   /**
    * @dev "+" means the state can be stored. Else, is dynamic. Meanings:
    * +Nothing: does not exist yet.
-   * Young: item is not considered included, but can be challenged.
-   * +Included: the item is considered included, can be challenged.
+   * Collateralized: item can be challenged. it could either be Included or Young.
+   * * use the view isItemMature to discern that, if needed.
    * +Disputed: currently under a Dispute.
    * +Removed: a Dispute ruled to remove this item.
    * IllegalList: item belongs to a list with bad parameters.
@@ -49,8 +49,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
    */
   enum ItemState {
     Nothing,
-    Young,
-    Included,
+    Collateralized,
     Disputed,
     Removed,
     Uncollateralized,
@@ -509,7 +508,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       accountId: accountId,
       listId: _listId,
       retractionTimestamp: 0,
-      state: ItemState.Included,
+      state: ItemState.Collateralized,
       lastUpdated: uint32(block.timestamp),
       regularStake: _stake,
       nextStake: _stake,
@@ -520,7 +519,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     });
     // if not Young or Included, something went wrong so it's reverted
     ItemState newState = getItemState(id);
-    require(newState == ItemState.Included || newState == ItemState.Young);
+    require(newState == ItemState.Collateralized);
 
     emit ItemAdded(id, _listId, accountId, _stake, _ipfsUri, _harddata);
   }
@@ -570,7 +569,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       accountId: senderId,
       listId: preItem.listId,
       retractionTimestamp: 0,
-      state: preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Included,
+      state: preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Collateralized,
       lastUpdated: uint32(block.timestamp),
       regularStake: adoption == AdoptionState.FullAdoption ? _stake : getCanonItemStake(_itemId),
       nextStake: _stake,
@@ -579,11 +578,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       freespace2: 0,
       harddata: _harddata
     });
-    // if not Young or Included, something went wrong so it's reverted.
+    // if not Collateralized, something went wrong so revert.
     // you can also edit items while they are Disputed, as that doesn't change
     // anything about the Dispute in place.
     ItemState newState = getItemState(_itemId);
-    require(newState == ItemState.Included || newState == ItemState.Young || newState == ItemState.Disputed);    
+    require(newState == ItemState.Collateralized || newState == ItemState.Disputed);    
 
     emit ItemEdited(_itemId, senderId, _stake, _ipfsUri, _harddata);
   }
@@ -648,7 +647,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     // to refresh, we change values directly to avoid "rebuilding" the harddata
     item.accountId = senderId;
     item.retractionTimestamp = 0;
-    item.state = preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Included;
+    item.state = preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Collateralized;
     item.lastUpdated = uint32(block.timestamp);
     item.regularStake = adoption == AdoptionState.FullAdoption ? _stake : getCanonItemStake(_itemId);
     item.nextStake = _stake;
@@ -661,7 +660,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     // you can also edit items while they are Disputed, as that doesn't change
     // anything about the Dispute in place.
     ItemState newState = getItemState(_itemId);
-    require(newState == ItemState.Included || newState == ItemState.Young || newState == ItemState.Disputed);    
+    require(newState == ItemState.Collateralized || newState == ItemState.Disputed);    
 
     emit ItemRefreshed(_itemId, senderId, _stake);
   }
@@ -787,11 +786,12 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       || commit.editionTimestamp < item.liveSince
       // d. wrong token
       || commit.token != list.token
-      // e. item is not either Uncollateralized, Young or Included
+      // e. item is not either Collateralized or Uncollateralized
+      // even if not fully collateralized, if the ratio of the challenge type
+      // is < 10_000, then there could still be enough to spare for challegner
       || !(
-        itemState == ItemState.Included
+        itemState == ItemState.Collateralized
         || itemState == ItemState.Uncollateralized
-        || itemState == ItemState.Young
       )
       // f. owner doesn't have enough value for arbFees
       || ownerValueAmount < (arbFees + valueBurn)
@@ -854,7 +854,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
         arbSetting.arbitrator, arbitratorDisputeId,
         stakeCurateSettings.currentMetaEvidenceId, _itemId
       );
-      emit Evidence(arbSetting.arbitrator, _itemId, msg.sender, _reason);
+      emit Evidence(_itemId, _reason);
     }
   }
 
@@ -933,7 +933,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       if (item.retractionTimestamp != 0) {
         item.retractionTimestamp = uint32(block.timestamp);
       }
-      item.state = ItemState.Included;
+      item.state = ItemState.Collateralized;
       // if list is not outdated, set lastUpdated
       if (item.lastUpdated > list.versionTimestamp) {
         // since _ratio was introduced to challenges,
@@ -967,7 +967,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     uint32 compressedItemStake = getCanonItemStake(_itemId);
     uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, list.token);
     uint256 valueFreeStake = Cint32.decompress(getCompressedFreeStake(item.accountId, valueToken));
-
 
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
     uint256 valueNeeded =
@@ -1003,18 +1002,32 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
         || compressedFreeStake < compressedItemStake
     ) {
       return (ItemState.Uncollateralized);
-    } else if (list.ageForInclusion == 0) {
-      // list opted out of distinguishing "Young" and "Included"
-      return (ItemState.Included);
-    } else if (
-        accounts[item.accountId].couldWithdrawAt + list.ageForInclusion > block.timestamp
-        || item.lastUpdated + list.ageForInclusion > block.timestamp
-        || !continuousBalanceCheck(item.accountId, address(list.token), compressedItemStake, uint32(block.timestamp) - list.ageForInclusion)
-        || !continuousBalanceCheck(item.accountId, address(valueToken), Cint32.compress(valueNeeded), uint32(block.timestamp) - list.ageForInclusion)
-    ) {
-      return (ItemState.Young);
     } else {
-      return (ItemState.Included);
+      return (ItemState.Collateralized);
+    }
+  }
+
+  function isItemMature(uint56 _itemId) public view returns (bool) {
+    Item memory item = items[_itemId];
+    List memory list = lists[item.listId];
+
+    uint32 compressedItemStake = getCanonItemStake(_itemId);
+
+    ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
+    uint256 valueNeeded =
+      arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData)
+      * BURN_RATE / 10_000;
+    
+    if (accounts[item.accountId].couldWithdrawAt + list.ageForInclusion > block.timestamp) {
+      return false;
+    } else if (item.lastUpdated + list.ageForInclusion > block.timestamp) {
+      return false;
+    } else if (!continuousBalanceCheck(item.accountId, address(list.token), compressedItemStake, uint32(block.timestamp) - list.ageForInclusion)) {
+      return false;
+    } else if (!continuousBalanceCheck(item.accountId, address(valueToken), Cint32.compress(valueNeeded), uint32(block.timestamp) - list.ageForInclusion)) {
+      return false;
+    } else {
+      return true;
     }
   }
 
