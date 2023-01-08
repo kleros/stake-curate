@@ -221,8 +221,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   // to previous lists if minimums were increased, or maximum decreased,
   // they were chosen to be constants instead.
 
-  uint16 public constant MIN_CHALLENGER_STAKE_RATIO = 3_333; // 33%
-  uint16 public constant BURN_RATE = 500; // 5%
+  uint32 public constant MIN_CHALLENGER_STAKE_RATIO = 2_083; // 20.83%
+  uint16 public constant BURN_RATE = 200; // 2%
 
   // prevents relevant historical balance checks from being too long
   uint32 public constant MAX_AGE_FOR_INCLUSION = 40 days;
@@ -241,13 +241,13 @@ contract StakeCurate is IArbitrable, IMetaEvidence {
   uint32 public constant CHALLENGE_WINDOW = 2 minutes;
 
   // seconds until a challenge reveal can be accepted
-  uint32 public constant MIN_TIME_FOR_REVEAL = 15 minutes;
+  uint32 public constant MIN_TIME_FOR_REVEAL = 5 minutes;
   // seconds until a challenge commit is too old
   // this is also the amount of time it takes for an item to be held by the nextStake
-  uint32 public constant MAX_TIME_FOR_REVEAL = 4 hours;
+  uint32 public constant MAX_TIME_FOR_REVEAL = 1 hours;
 
   // ----- CONTRACT STORAGE -----
-  
+
   StakeCurateSettings public stakeCurateSettings;
 
   // todo get these counts in a single struct?
