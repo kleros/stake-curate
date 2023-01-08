@@ -64,9 +64,18 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     // could alternatively act as some kind of public goods funding, or rent.
     address burner;
     uint32 currentMetaEvidenceId;
+    uint64 freespace;
     // --- 2nd slot
     // can change the burner and the governor
     address governor;
+    uint56 itemCount;
+    uint40 freespace2;
+    //
+    uint56 listCount;
+    uint56 disputeCount;
+    uint56 accountCount;
+    uint56 arbitrationSettingCount;
+    uint32 freespace3;
   }
 
   struct Account {
@@ -164,7 +173,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
 
   // Used to initialize counters in the subgraph
   event StakeCurateCreated();
-  event ChangedStakeCurateSettings(StakeCurateSettings _settings);
+  event ChangedStakeCurateSettings(address _governor, address _burner);
   event ArbitratorAllowance(IArbitrator _arbitrator, bool _allowance);
 
   event AccountCreated(uint56 indexed _accountId);
@@ -250,13 +259,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
 
   StakeCurateSettings public stakeCurateSettings;
 
-  // todo get these counts in a single struct?
-  uint56 public itemCount;
-  uint56 public listCount;
-  uint56 public disputeCount;
-  uint56 public accountCount;
-  uint56 public arbitrationSettingCount;
-
   mapping(address => uint56) public accountIdOf;
   mapping(uint56 => Account) public accounts;
   mapping(uint56 => mapping(address => BalanceSplit[])) public splits;
@@ -281,24 +283,25 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
 
   /** 
    * @dev Constructs the StakeCurate contract.
-   * @param _settings Initial StakeCurate Settings.
+   * @param _governor Can change these settings
+   * @param _burner Recipient of burn fees
    * @param _metaEvidence IPFS uri of the initial MetaEvidence
    */
-  constructor(StakeCurateSettings memory _settings, string memory _metaEvidence) {
-    _settings.currentMetaEvidenceId = 0; // make sure it's set to zero
-    stakeCurateSettings = _settings;
+  constructor(address _governor, address _burner, string memory _metaEvidence) {
+    stakeCurateSettings.governor = _governor;
+    stakeCurateSettings.burner = _burner;
 
     // purpose: prevent dispute zero from being used.
     // this dispute has the ArbitrationSetting = 0. it will be
     // made impossible to rule with, and kept with arbitrator = address(0) forever,
     // so, it cannot be ruled. thus, requiring the disputeSlot != 0 on rule is not needed.
-    arbitrationSettingCount = 1;
+    stakeCurateSettings.arbitrationSettingCount = 1;
     disputes[0].state = DisputeState.Used;
-    disputeCount = 1; // since disputes are incremental, prevent local dispute 0
-    accountCount = 1; // accounts[0] cannot be used either
+    stakeCurateSettings.disputeCount = 1; // since disputes are incremental, prevent local dispute 0
+    stakeCurateSettings.accountCount = 1; // accounts[0] cannot be used either
 
     emit StakeCurateCreated();
-    emit ChangedStakeCurateSettings(_settings);
+    emit ChangedStakeCurateSettings(_governor, _burner);
     emit MetaEvidence(0, _metaEvidence);
     emit ArbitrationSettingCreated(0, address(0), "");
   }
@@ -307,18 +310,20 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
 
   /**
    * @dev Governor changes the general settings of Stake Curate
-   * @param _settings New settings. The currentMetaEvidenceId is not used
-   * @param _metaEvidence IPFS uri to the new MetaEvidence
+   * @param _governor Can change these settings
+   * @param _burner Recipient of burn fees
+   * @param _metaEvidence IPFS uri of the initial MetaEvidence
    */
   function changeStakeCurateSettings(
-    StakeCurateSettings memory _settings,
+    address _governor,
+    address _burner,
     string calldata _metaEvidence
   ) external {
     require(msg.sender == stakeCurateSettings.governor);
     // currentMetaEvidenceId must be incremental, so preserve previous one.
-    _settings.currentMetaEvidenceId = stakeCurateSettings.currentMetaEvidenceId;
-    stakeCurateSettings = _settings;
-    emit ChangedStakeCurateSettings(_settings);
+    stakeCurateSettings.governor = _governor;
+    stakeCurateSettings.burner = _burner;
+    emit ChangedStakeCurateSettings(_governor, _burner);
     stakeCurateSettings.currentMetaEvidenceId++;
     emit MetaEvidence(stakeCurateSettings.currentMetaEvidenceId, _metaEvidence);
   }
@@ -332,7 +337,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     if (accountIdOf[_owner] != 0) {
       id = accountIdOf[_owner];
     } else {
-      id = accountCount++;
+      id = stakeCurateSettings.accountCount++;
       accountIdOf[_owner] = id;
       accounts[id].owner = _owner;
       emit AccountCreated(id);
@@ -427,7 +432,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
    */
   function createArbitrationSetting(address _arbitrator, bytes calldata _arbitratorExtraData)
       external returns (uint56 id) {
-    unchecked {id = arbitrationSettingCount++;}
+    unchecked {id = stakeCurateSettings.arbitrationSettingCount++;}
     // address 0 cannot be arbitrator. makes id overflow attacks more expensive.
     require(_arbitrator != address(0));
     arbitrationSettings[id] = ArbitrationSetting({
@@ -448,9 +453,9 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       List memory _list,
       string calldata _metalist
   ) external returns (uint56 id) {
-    require(_list.arbitrationSettingId < arbitrationSettingCount);
+    require(_list.arbitrationSettingId < stakeCurateSettings.arbitrationSettingCount);
     require(_list.outbidRate >= 10_000);
-    unchecked {id = listCount++;}
+    unchecked {id = stakeCurateSettings.listCount++;}
     _list.governorId = accountRoutine(_governor);
     lists[id] = _list;
     emit ListUpdated(id, _list, _metalist);
@@ -469,7 +474,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     List memory _list,
     string calldata _metalist
   ) external {
-    require(_list.arbitrationSettingId < arbitrationSettingCount);
+    require(_list.arbitrationSettingId < stakeCurateSettings.arbitrationSettingCount);
     require(_list.outbidRate >= 10_000);
     // only governor can update a list
     require(accounts[lists[_listId].governorId].owner == msg.sender);
@@ -498,7 +503,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     // this require below is needed, because going through withdrawing doesn't entail uncollateralized
     // but item additions or updates should not be allowed while going through.
     require(accounts[accountId].withdrawingTimestamp == 0);
-    unchecked {id = itemCount++;}
+    unchecked {id = stakeCurateSettings.itemCount++;}
     require(_forListVersion == lists[_listId].versionTimestamp);
     require(_stake >= lists[_listId].requiredStake);
     require(_stake <= lists[_listId].maxStake);
@@ -805,7 +810,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       emit CommitRevoked(_commitIndex);
     } else {
       // proceed with the challenge
-      unchecked {id = disputeCount++;}
+      unchecked {id = stakeCurateSettings.disputeCount++;}
 
       // create dispute
       uint256 arbitratorDisputeId =
