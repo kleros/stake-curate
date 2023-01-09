@@ -670,10 +670,15 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     emit ItemRefreshed(_itemId, senderId, _stake);
   }
 
-  // since eip-712 is not necessary to build the hash, we won't use it.
-  // this saves the user the process of doing a wallet signature.
-  // even though it's an standard, we don't care about signing.
-  // so we'll use a regular hashing operation to build the _commitHash
+  /**
+   * @dev Prepares a challenge. The challenge will take place once it is revealed.
+   *  the challenger places a deposit in order to make this commit.
+   * @param _token Token to commit the challenge with.
+   * @param _compressedTokenAmount How many tokens to commit.
+   * @param _editionTimestamp Edition of the item being targeted with this challenge.
+   * @param _commitHash h(salt, itemId, ratio, reason)
+   *  This is a regular hash, not a signature. eip-712 is not needed.
+   */
   function commitChallenge(
     IERC20 _token,
     uint32 _compressedTokenAmount,
@@ -708,6 +713,18 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     return (challengeCommits.length - 1);
   }
 
+  /**
+   * @dev Reveals a committed challenge. The dispute will take place if the
+   *  challenge is successful, otherwise, the funds will be returned, possibly
+   *  incurring a burn.
+   * @param _commitIndex Index of the commit to reveal.
+   * @param _salt Salt that was used for the hash
+   * @param _itemId Item targeted for this challenge
+   * @param _ratio Ratio linked with the challengeType invoked.
+   *  if it was incorrect, then the arbitrator must reject the challenge.
+   * @param _reason Ipfs with the reason behind the challenge.
+   *  it also contains the challengeType targeted with the challenge.
+   */
   function revealChallenge(
     uint256 _commitIndex,
     bytes32 _salt,
@@ -863,6 +880,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     }
   }
 
+  /**
+   * @dev Revoke a commit that has timed out. It will burn tokens and value,
+   *  and reimburse the rest to the challenger.
+   * @param _commitIndex Index of the commit to reveal.
+   */
   function revokeCommit(uint256 _commitIndex) external {
     ChallengeCommit memory commit = challengeCommits[_commitIndex];
     delete challengeCommits[_commitIndex];
@@ -966,6 +988,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     );
   }
 
+  /**
+   * @dev Get the state of an item. Some states need to be calculated dynamically.
+   * @param _itemId Id of the item to check
+   */
   function getItemState(uint56 _itemId) public view returns (ItemState) {
     Item memory item = items[_itemId];
     List memory list = lists[item.listId];
@@ -1012,9 +1038,25 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     }
   }
 
+  /**
+   * @dev For items that are known to be Collateralized, this function
+   *  discerns whether if the item is "Young" or "Included".
+   *
+   *  Young means that the list states that items need to be collateralized
+   *  within a given acceptance period, and that the item has not yet went through it.
+   *
+   *  Included means that it has gone through it, or, that the list doesn't
+   *  check for this acceptance period.
+   * @param _itemId Id of the item to check
+   */
   function isItemMature(uint56 _itemId) public view returns (bool) {
     Item memory item = items[_itemId];
     List memory list = lists[item.listId];
+
+    // list opted out of distinguishing "Young" and "Included"
+    if (list.ageForInclusion == 0) {
+      return true;
+    }
 
     uint32 compressedItemStake = getCanonItemStake(_itemId);
 
@@ -1036,6 +1078,12 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     }
   }
 
+  /**
+   * @dev This is used for two things:
+   *  - figure out whether if an item has gone from unincluded to included
+   *  - figure out if the stake of the item needs to be matched, outbid, or can be ignored.
+   * @param _itemId Id of the item to check
+   */
   function getAdoptionState(uint56 _itemId) public view returns (AdoptionState) {
     ItemState state = getItemState(_itemId);
     if (state == ItemState.Removed || state == ItemState.Retracted || state == ItemState.Uncollateralized || state == ItemState.Outdated) {
@@ -1053,6 +1101,13 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     }
   }
 
+  /**
+   * @dev Withdraw funds or rewards, automatically applying burns if needed.
+   * @param _beneficiary s.e.
+   * @param _token Token to withdraw. It could be address(0), which means value.
+   * @param _amount s.e.
+   * @param _burnRate How much will be burnt, in basis points.
+   */
   function processWithdrawal(
     address _beneficiary, IERC20 _token, uint256 _amount, uint32 _burnRate
   ) internal {
@@ -1071,6 +1126,12 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     }
   }
 
+  /**
+   * @dev Internal procedure to add or remove balance records.
+   * @param _accountId s.e.
+   * @param _token Token to record. It could be address(0), which means value.
+   * @param _freeStake The new latest balance.
+   */
   function balanceRecordRoutine(uint56 _accountId, address _token, uint256 _freeStake) internal {
     BalanceSplit[] storage arr = splits[_accountId][_token];
     BalanceSplit memory curr = arr[arr.length-1];
@@ -1111,6 +1172,13 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     }
   }
 
+  /**
+   * @dev Check whether if an account has held a certain amount for a certain time.
+   * @param _accountId s.e.
+   * @param _token Token to check. It could be address(0), which means value.
+   * @param _requiredStake The amount to assert
+   * @param _targetTime We check if the amount is enough at every point after this timestamp.
+   */
   function continuousBalanceCheck(
     uint56 _accountId, address _token, uint32 _requiredStake, uint32 _targetTime
   ) internal view returns (bool) {
@@ -1132,6 +1200,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     return (false);
   }
 
+  /**
+   * @dev Get current balance of an account, of a particular token.
+   * @param _accountId s.e.
+   * @param _token Token to check. It could be address(0), which means value.
+   */
   function getCompressedFreeStake(uint56 _accountId, IERC20 _token) public view returns (uint32) {
     uint256 len = splits[_accountId][address(_token)].length;
     if (len == 0) return (0);
@@ -1139,6 +1212,12 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     return (splits[_accountId][address(_token)][len - 1].min);
   }
 
+  /**
+   * @dev Get the stake that is collateralizing an item in the present.
+   *  This was needed to prevent item owners to instantly raise stakes
+   *  and force challenges to revert due to undercollateralization.
+   * @param _itemId s.e.
+   */
   function getCanonItemStake(uint56 _itemId) public view returns (uint32) {
     if (items[_itemId].lastUpdated + MAX_TIME_FOR_REVEAL >= block.timestamp) {
       return (items[_itemId].nextStake);
