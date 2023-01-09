@@ -21,7 +21,6 @@ import "./Cint32.sol";
  * @notice Curate with indefinitely held, capital-efficient stake.
  * @dev The stakes of the items are handled here. Handling arbitrary on-chain data is
  * possible, but many curation needs can be solved by keeping off-chain state availability.
- * This dapp should be reviewed taking the subgraph role into account.
  */
 contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
 
@@ -40,10 +39,9 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
    * * use the view isItemMature to discern that, if needed.
    * +Disputed: currently under a Dispute.
    * +Removed: a Dispute ruled to remove this item.
-   * IllegalList: item belongs to a list with bad parameters.
-   * * interaction is purposedly discouraged.
    * Uncollateralized: owner doesn't have enough collateral,
-   * * also triggers if owner can withdraw.
+   * * also triggers if owner can withdraw. However, it could still be challenged
+   * * if the owner had enough tokens.
    * Outdated: item was last updated before the last list version.
    * Retracted: owner made it go through the retraction period.
    */
@@ -99,13 +97,13 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     uint32 retractionPeriod; 
     uint56 arbitrationSettingId;
     uint32 versionTimestamp;
-    uint32 maxStake; // protects from some frontrun attacks
+    uint32 maxStake; // protects from some bankrun attacks
     uint16 freespace;
     // ----
     IERC20 token;
     uint32 challengerStakeRatio; // (basis points) challenger stake in proportion to the item stake
     uint32 ageForInclusion; // how much time from Young to Included, in seconds
-    uint32 outbidRate; // how much is needed for a different owner to adopt an item.
+    uint32 outbidRate; // how much is needed for a different owner to adopt an item, in basis points.
   }
 
   struct Item {
@@ -522,7 +520,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       freespace2: 0,
       harddata: _harddata
     });
-    // if not Young or Included, something went wrong so it's reverted
+    // if not Collateralized, something went wrong
     ItemState newState = getItemState(id);
     require(newState == ItemState.Collateralized);
 
@@ -661,7 +659,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       item.liveSince = uint32(block.timestamp);
     }
 
-    // if not Young or Included, something went wrong so it's reverted.
+    // if not Collateralized, something went wrong so it's reverted.
     // you can also edit items while they are Disputed, as that doesn't change
     // anything about the Dispute in place.
     ItemState newState = getItemState(_itemId);
@@ -810,7 +808,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       || commit.token != list.token
       // e. item is not either Collateralized or Uncollateralized
       // even if not fully collateralized, if the ratio of the challenge type
-      // is < 10_000, then there could still be enough to spare for challegner
+      // is < 10_000, then there could still be enough to spare for challenger
       || !(
         itemState == ItemState.Collateralized
         || itemState == ItemState.Uncollateralized
@@ -902,7 +900,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
   }
 
   /**
-   * @dev Submits evidence to potentially any dispute or item.
+   * @dev Submits evidence to an item. Evidence can be emitted at any time.
+   *  Item existence is not checked, since quality filtering would be done externally.
+   *  For example, if the item did not exist at the time the Evidence was emitted, then
+   *  it could be hidden.
+   *  Assume this function will be the subject of spam and flood.
    * @param _itemId Id of the item to submit evidence to.
    * @param _evidence IPFS uri linking to the evidence.
    */
@@ -961,11 +963,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
         item.retractionTimestamp = uint32(block.timestamp);
       }
       item.state = ItemState.Collateralized;
-      // if list is not outdated, set lastUpdated
+      // if list is not outdated, set item lastUpdated
       if (item.lastUpdated > list.versionTimestamp) {
         // since _ratio was introduced to challenges,
         // you can no longer make the assumption that the item will become
-        // Young or Included if the list hasn't updated,
+        // Collateralized if the list hasn't updated,
         // as the item owner may have lost more tokens in the process,
         // and the unlocked tokens are no longer enough by themselves to collateralize.
         // but it shouldn't be a problem anyway, since it will just become
@@ -1004,12 +1006,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData)
       * BURN_RATE / 10_000;
 
-    if (item.state == ItemState.Disputed) {
-      // if item is disputed, no matter if list is illegal, the dispute predominates.
-      return (ItemState.Disputed);
-    } else if (
-        item.state == ItemState.Removed
-        || item.state == ItemState.Nothing
+    if (
+      item.state == ItemState.Disputed
+      || item.state == ItemState.Removed
+      || item.state == ItemState.Nothing
     ) {
       // these states are returned as they are.
       return (item.state);
