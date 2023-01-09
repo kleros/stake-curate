@@ -876,7 +876,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
         arbSetting.arbitrator, arbitratorDisputeId,
         stakeCurateSettings.currentMetaEvidenceId, _itemId
       );
-      emit Evidence(_itemId, _reason);
+      // reason is not emitted as evidence, it was emitted in CommitReveal already.
     }
   }
 
