@@ -22,7 +22,7 @@ It shows you the *challenge types* there are accepted for removing items in this
 
 According to the field types, the form will render errors if incorrect data is put in. Unless all mandatory fields are correctly filled, the "Submit" button will stay greyed out.
 
-If the user does not have a Stake Curate account, or their account does not possess enough stake (in both value for the arbitration fees, and tokens for the challengers), then the "Submit" button takes a different shape. It shows you how much value and tokens you need to stake in order to be able to submit. Note tokens may need to be approved separatedly.
+If the user does not have a Stake Curate account, or their account does not possess enough stake (in both value for the arbitration fees, and tokens for the challengers), then the "Submit" button takes a different shape. It shows you how much value and tokens you need to stake in order to be able to submit. Note tokens may need to be approved separately.
 
 ```
 If not enough value   If not enough tokens
@@ -45,7 +45,7 @@ If neither            If enough
 Advanced users may want to make this item stake be higher, in order to get punish griefers and get greater compensations from the damages they may cause, but I don't know how to provide this option in a simple way.
 
 
-**Items Panel**: It shows you the items that were submitted to this list. There a bunch of filters, examples: Included, Challengeable, Removed, Outdated... . Included is the filter that's enabled by default.
+**Items Panel**: It shows you the items that were submitted to this list. There is a bunch of filters, examples: Included, Challengeable, Removed, Outdated... . Included is the filter that's enabled by default.
 For each item, it shows the properties of the latest edition. They are pruned or omitted if they need to, in order to fit. Clicking on an item directs to Item View.
 In this view, if an item is challengeable, you can see how many tokens could you get by challenging and winning.
 In case the List is a List of Lists, the Item instead provides a button to open the list, but it can still be clicked to check its details like any other Item.
@@ -64,7 +64,7 @@ If the item is challengeable, at the bottom, you can see how many tokens could y
 If there are incorrect fields, that is, fields that do not correspond with the list version contemporary to the edition, a warning is shown besides them. This is in the form of a red warning sign, to the left of the field name. Hovering over the warning sign tells you the reason.
 > Field 'Field' is unknown.
 
-If there are mandatory missing fields, show a warning at the top of the edition. On hover, show the the missing fields.
+If there are mandatory missing fields, show a warning at the top of the edition. On hover, show the missing fields.
 > Field(s) 'Field1', Field2' are missing.
 
 If there are validation errors for existing fields, warn on them as well with a yellow warning sign, and show the validation error.
