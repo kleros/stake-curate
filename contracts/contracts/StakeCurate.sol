@@ -455,6 +455,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     require(_list.outbidRate >= 10_000);
     unchecked {id = stakeCurateSettings.listCount++;}
     _list.governorId = accountRoutine(_governor);
+    _list.versionTimestamp = uint32(block.timestamp);
     lists[id] = _list;
     emit ListUpdated(id, _list, _metalist);
   }
@@ -477,6 +478,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     // only governor can update a list
     require(accounts[lists[_listId].governorId].owner == msg.sender);
     _list.governorId = accountRoutine(_governor);
+    _list.versionTimestamp = uint32(block.timestamp);
     lists[_listId] = _list;
     emit ListUpdated(_listId, _list, _metalist);
   }
