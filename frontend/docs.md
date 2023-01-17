@@ -9,6 +9,60 @@
 Looks like a landing page. Showcases some stats, like how much value has been staked, etc.
 Provides a button that links to The List, which is a list of lists intended to act as the frontdoor of the application.
 
+### Create List
+
+`/create-list`
+
+Allows user to create a list. Stake Curate can provide a huge potential level of customization, but in the interest of simplicity, most fields will be assigned sensible defaults, and will only be able to be changed if the user toggles "Advanced Settings".
+
+On the basic mode, the list creator is a wizard, during the which you will set:
+
+**First Step (Basic)**:
+
+- List Policy. The list creator will be reminded that Stake Curate possesses a General Policy, whose clauses cannot be overriden by the List Policy. It could be in any format.
+- Logo.
+- Title.
+- Short description of the List.
+- Item Name, and Item Name in plural. (optional)
+- Item Stake. (Default 5$. This simple mode will allow a minimum of 1$).
+
+**First Step (Extras for Advanced Settings)**:
+
+- Token. It works with a selector and some preloaded tokens, like DAI and WETH. If users demand using custom tokens, it could be made to work with an input field for addresses as well.
+- List Governor. Default: the connected account.
+- Challenger Stake Ratio. Default: 50%
+- Retraction Period. Default: 3 days.
+- Arbitration Settings: Defaults to Kleros Curation Court, with 3 jurors. On the smart contract level, Stake Curate could use different arbitrators, but to give a simpler UX, it will simply use Kleros v2 courts and disputeKits. Ability to use custom arbitrator can be added if users demand it. It uses two selectors, one for Dispute Kit, and one for subcourt. It uses an input field with a draggable line to set number of jurors on the first round.
+- Max Stake: Defaults to x100 the Item Stake. Must be equal or greater that Item Stake. It updates automatically as the Item Stake is modified, maintaining ratio.
+- Age For Inclusion: Defaults to 0. Seconds until item is considered included.
+- Outbid Ratio: Defaults to 150%.
+
+**Second Step**:
+
+There is a toggle at the top, to change whether if the list is a "List of Lists" or not. If toggled on, there's nothing else to do in this step.
+
+Consists on creating fields. Each field has a label, description, type, and a checkbox to mark whether if it's a mandatory field.
+
+Examples of types: Number, Address, URL, Image...
+
+These fields are expected to be properly reflected and explained in the List Policy.
+
+Then, there is a toggle for accepting arbitrary on-chain data (known from now on as *harddata*). Use cases that require reading on-chain information, can toggle this on. Data will be accessible in a `bytes` array. If toggled on, a short description can be entered explaining what it is for. A checkbox to mark if it's mandatory. It is implied that correct on-chain data is defined at the policy level. This is an advanced setting, and most list creators will not require it.
+
+In the future, a library such as [gtcr-encoder](https://github.com/kleros/gtcr-encoder) could be used to streamline how harddata is read and consumed, but this will not be implemented at launch, so on-chain usage is expected to provide custom solutions.
+
+For now, this is the final step. In the future, *Badges* will be added.
+
+### Edit List
+
+This is actually similar to the Create List wizard, with the following differences:
+
+- Every field is prefilled with the already existing List.
+- Modifying a field renders its border yellow, so that the user can see that it's being modified.
+- At the end of the process, the user will see a list of fields that are being modified.
+
+If an user is not connected with the List governor, an error should show.
+
 ### List View
 
 `/list/4`
@@ -18,7 +72,11 @@ Contains panels as described below. Panels can be collapsed and expanded.
 **Basic Info Panel**: Renders some basic information about the List: Name, description, link to the policy, minimum amount (both in tokens and value) to submit items.
 It shows you the *challenge types* there are accepted for removing items in this registry. A challenge type contains a title, a short description, a ratio (the % of the item stake the challenger will obtain as reward), and should be clarified in the List Policy. If the List doesn't enable this setting, then this stays hidden. (This means, there's only 1 challenge type of "Incorrect Item", that takes 100% of the item stake as a reward.) It also features a button that spawns a **➕ Create Item** modal.
 
+If user is connected as the governor of the list, a button appears to **Edit List**. It will direct the user to a different page.
+
 **Create Item Modal**: This is a form, for the user to fill. Query parameters can be used to prefill these fields (e.g. `/list/4?mode=submit&name=Dorothy`) which is useful to integrate faster with other apps. Every field corresponds to a row. They contain the field name, a field description you can read by hovering, and an input field. To the right, there's some extra space to fit a ✔️ or ❌.
+
+If List allows or requires harddata, a field is available for it. It will accept bytes, encoded with `0x`. In a later update, it could support to input the information in a more friendly way, like in a form.
 
 According to the field types, the form will render errors if incorrect data is put in. Unless all mandatory fields are correctly filled, the "Submit" button will stay greyed out.
 
@@ -70,9 +128,13 @@ If there are mandatory missing fields, show a warning at the top of the edition.
 If there are validation errors for existing fields, warn on them as well with a yellow warning sign, and show the validation error.
 > Address cannot contain character 'p'.
 
-Buttons may be shown in the top right corner: a "♻️ Refresh" button, an "✏️ Edit" button, and a "🚩 Challenge" button.
+If there is harddata, when there shouldn't be, or viceversa, an error shows.
 
-Refresh simply calls the function `refreshItem`. For simple users, this should only show if the item has been Removed, Retracted, is Outdated, Uncollateralized, etc. Advanced users may want to use this to raise the stakes, so they would need to be able to input token amounts.
+Buttons may be shown in the top right corner: a "♻️ Refresh" button, an "✏️ Edit" button, a "🗑 Delete", a "🚩 Challenge" button.
+
+These buttons would contract to the icons if not enough space.
+
+**Refresh** simply calls the function `refreshItem`. For simple users, this should only show if the item has been Removed, Retracted, is Outdated, Uncollateralized, etc. Advanced users may want to use this to raise the stakes, so they would need to be able to input token amounts.
 
 **Editing**
 
@@ -81,6 +143,8 @@ This button shows at all times, even if the item was Removed, or even if the Ite
 Clicking on it will open up a modal. It will automatically hide incorrect fields from view. It starts with the previous values prefilled by default. It will render unfilled, optional fields as well. There is a "Next" button below, that will be greyed out until all mandatory fields are properly filled in without errors. Query parameters can be used to prefill an edit (`/item/52?mode=edit&name=Mark`).
 
 Clicking "Next" will let you see the changes, it will only show what fields have changed. If circumstances make it so that the account requires staking more value and tokens in order to take ownership of the item, the button is replaced by a staking button. If already enough, you can click "Confirm Edit" to finally Edit the item. Just like with Refresh, advanced users may want to use this to raise the stakes. But let's implement the UX support when it's actually needed.
+
+**Delete**: Relates to "retractions" in the smart contract. This is only visible if the user is the owner of the item. If it's currently retracting, it instead changes to "Stop Deletion", and it shows a timer. Within that timer, the item will continue to be challengeable.
 
 **Challenge**: It will open up a modal. The required stakes to challenge the item are shown. They are expressed in ETH and in the needed ERC20 tokens.
 
@@ -136,9 +200,7 @@ These functions require the user to hold a certain amount of tokens and value in
 
 ## TODO
 
-- creating lists
-- editing lists, by the list governor
-- retracting items, when you're the owner
+- review metalist in subgraph
 - withdrawing funds from your account
 - toggle for "auto-reveal"?
 - explain outbidding in `itemStake`
