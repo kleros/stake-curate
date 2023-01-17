@@ -204,10 +204,11 @@ These functions require the user to hold a certain amount of tokens and value in
   - If the user offers more than the maximum, the button will turn red, and unpressable. "Item stake over threshold". A shortcut must be offered to the user to set stake to maximum, instead.
   - If choosing an amount that is over their means, it will prevent them from continuing. "Insufficient Balance". A shortcut may be offered to the user to set the maximum amount within their means.
 
+- Note that the item stated above will usually just be the `requiredStake` of the List. But, when the user is not the owner of the item, and the item is currently included, the user must provide `currentStake * outbidRatio` of the List. This should not be reflected on the UX, it should be handled behind the scenes.
+
 - If there are not enough funds in the user's account but the wallet holds enough, the button that will commit the action will ask them to fund first. Funding can use tokens as well, so if the amount of extra tokens to submit is non-zero, allowance is checked, and if not enough, approval will be done first, either manually or with EIP-2612.
 
 ## TODO
 
-- explain outbidding in `itemStake`
 - toggle for "auto-reveal"?
 - reconsider if modals should stay or be replaced
