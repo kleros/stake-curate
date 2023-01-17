@@ -9,6 +9,14 @@
 Looks like a landing page. Showcases some stats, like how much value has been staked, etc.
 Provides a button that links to The List, which is a list of lists intended to act as the frontdoor of the application.
 
+### Account View
+
+This could show some stats about the account, like items, etc. For a first version, all there needs to be here is a way for the user to withdraw their balances.
+
+If the user has not started the *withdrawing period*, they will see a button "Start Withdrawing Process", allowing them to begin it. It will last a week. A timer will show. When this timer ends, the user can withdraw any of their stakes, from any of their tokens or value. During this state (within period, and after period), the user cannot submit items, or take ownership of items.
+
+If the user is on the withdrawing process, or has already finished going through the process and wants to stop it, they can click on "Stop Withdrawing Process". After this is done, they will need to go through the period to be able to withdraw deposits again.
+
 ### Create List
 
 `/create-list`
@@ -200,8 +208,6 @@ These functions require the user to hold a certain amount of tokens and value in
 
 ## TODO
 
-- review metalist in subgraph
-- withdrawing funds from your account
-- toggle for "auto-reveal"?
 - explain outbidding in `itemStake`
+- toggle for "auto-reveal"?
 - reconsider if modals should stay or be replaced
