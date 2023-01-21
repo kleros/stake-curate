@@ -228,30 +228,40 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
   // to previous lists if minimums were increased, or maximum decreased,
   // they were chosen to be constants instead.
 
-  uint32 public constant MIN_CHALLENGER_STAKE_RATIO = 2_083; // 20.83%
-  uint16 public constant BURN_RATE = 200; // 2%
+  uint32 internal constant MIN_CHALLENGER_STAKE_RATIO = 2_083; // 20.83%
+  uint16 internal constant BURN_RATE = 200; // 2%
 
   // prevents relevant historical balance checks from being too long
-  uint32 public constant MAX_AGE_FOR_INCLUSION = 40 days;
+  uint32 internal constant MAX_AGE_FOR_INCLUSION = 40 days;
   // min seconds for retraction in any list
   // if a list were to allow having a retractionPeriod that is too low
   // compared to the minimum time for revealing a commit, that would make
   // having an item be retracted unpredictable at commit time. 
-  uint32 public constant MIN_RETRACTION_PERIOD = 1 days;
-  uint32 public constant WITHDRAWAL_PERIOD = 7 days;
+  uint32 internal constant MIN_RETRACTION_PERIOD = 1 days;
+  uint32 internal constant WITHDRAWAL_PERIOD = 7 days;
 
   // maximum size, in time, of a balance record. they are kept in order to
   // dynamically find out the age of items.
-  uint32 public constant BALANCE_SPLIT_PERIOD = 6 hours;
+  uint32 internal constant BALANCE_SPLIT_PERIOD = 6 hours;
 
   // span of time granted to challenger to reference previous editions
-  uint32 public constant CHALLENGE_WINDOW = 2 minutes;
+  uint32 internal constant CHALLENGE_WINDOW = 2 minutes;
 
   // seconds until a challenge reveal can be accepted
-  uint32 public constant MIN_TIME_FOR_REVEAL = 5 minutes;
+  uint32 internal constant MIN_TIME_FOR_REVEAL = 5 minutes;
   // seconds until a challenge commit is too old
   // this is also the amount of time it takes for an item to be held by the nextStake
-  uint32 public constant MAX_TIME_FOR_REVEAL = 1 hours;
+  uint32 internal constant MAX_TIME_FOR_REVEAL = 1 hours;
+
+  /**
+   * @dev This is a hack, you want the loser side to pay for the arbFees
+   *  So you need to keep track of native value amounts from item owner. 
+   *  You need to ensure amounts are sufficient for the optional period.
+   *  So you need balance records. We can reuse balance records for
+   *  values without rewriting code, for that, treat "valueToken" == IERC20(0)
+   *  as the placeholder for native value amounts.
+   */
+  IERC20 internal constant valueToken = IERC20(address(0)); 
 
   // ----- CONTRACT STORAGE -----
 
@@ -267,17 +277,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
   mapping(uint56 => DisputeSlot) public disputes;
   mapping(address => mapping(uint256 => uint56)) public arbitratorAndDisputeIdToLocal;
   mapping(uint56 => ArbitrationSetting) public arbitrationSettings;
-
-
-  /**
-   * @dev This is a hack, you want the loser side to pay for the arbFees
-   *  So you need to keep track of native value amounts from item owner. 
-   *  You need to ensure amounts are sufficient for the optional period.
-   *  So you need balance records. We can reuse balance records for
-   *  values without rewriting code, for that, treat "valueToken" == IERC20(0)
-   *  as the placeholder for native value amounts.
-   */
-  IERC20 constant valueToken = IERC20(address(0)); 
 
   /** 
    * @dev Constructs the StakeCurate contract.
@@ -297,6 +296,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     disputes[0].state = DisputeState.Used;
     stakeCurateSettings.disputeCount = 1; // since disputes are incremental, prevent local dispute 0
     stakeCurateSettings.accountCount = 1; // accounts[0] cannot be used either
+    // address(0) can still have an account, though
 
     emit StakeCurateCreated();
     emit ChangedStakeCurateSettings(_governor, _burner);
