@@ -1,9 +1,9 @@
 /**
- * @authors: [@shotaronowhere]
- * @reviewers: []
- * @auditors: []
- * @bounties: []
- * @deployments: []
+ * @custom:authors: [@shotaronowhere]
+ * @custom:reviewers: []
+ * @custom:auditors: []
+ * @custom:bounties: []
+ * @custom:deployments: []
  * SPDX-License-Identifier: Licenses are not real
  */
 
