@@ -30,7 +30,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
    * @dev "Adoption" pretty much means "you can / cannot edit or refresh".
    *  To avoid redundancy, this applies either if new owner is different or not.
    */
-  enum AdoptionState { FullAdoption, NeedsOutbid }
+  enum AdoptionState { FullAdoption, MatchOrRaise }
 
   /**
    * @dev "+" means the state can be stored. Else, is dynamic. Meanings:
@@ -552,9 +552,12 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     if (adoption == AdoptionState.FullAdoption) {
       require(_stake >= list.requiredStake);
     } else {
-      // outbidding is needed.
-      if (senderId == preItem.accountId) {
-        // if it's just current owner, it's enough if they match
+      if (senderId == preItem.accountId || preItem.state == ItemState.Disputed) {
+        // if sender is current owner, it's enough if they match
+        // also, if item is currently challenged, to cover an edge case in which
+        // item owner doesn't bother to raise stakes in a highly disputed item
+        // that has a prohibitively high outbidRatio, anyone can take the item
+        // if they match the bid.
         require(_stake >= preItem.nextStake);
       } else {
         // outbidding by rate is required
@@ -630,9 +633,12 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     if (adoption == AdoptionState.FullAdoption) {
       require(_stake >= list.requiredStake);
     } else {
-      // outbidding is needed.
-      if (senderId == preItem.accountId) {
-        // if it's just current owner, it's enough if they match
+      if (senderId == preItem.accountId || preItem.state == ItemState.Disputed) {
+        // if sender is current owner, it's enough if they match
+        // also, if item is currently challenged, to cover an edge case in which
+        // item owner doesn't bother to raise stakes in a highly disputed item
+        // that has a prohibitively high outbidRatio, anyone can take the item
+        // if they match the bid.
         require(_stake >= preItem.nextStake);
       } else {
         // outbidding by rate is required
@@ -1104,7 +1110,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     if (compressedFreeStake < item.nextStake) {
       return (AdoptionState.FullAdoption);
     } else {
-      return (AdoptionState.NeedsOutbid);
+      return (AdoptionState.MatchOrRaise);
     }
   }
 
