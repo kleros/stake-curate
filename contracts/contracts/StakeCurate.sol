@@ -451,8 +451,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       List memory _list,
       string calldata _metalist
   ) external returns (uint56 id) {
-    require(_list.arbitrationSettingId < stakeCurateSettings.arbitrationSettingCount);
-    require(_list.outbidRate >= 10_000);
+    require(listLegalCheck(_list));
     unchecked {id = stakeCurateSettings.listCount++;}
     _list.governorId = accountRoutine(_governor);
     _list.versionTimestamp = uint32(block.timestamp);
@@ -473,8 +472,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     List memory _list,
     string calldata _metalist
   ) external {
-    require(_list.arbitrationSettingId < stakeCurateSettings.arbitrationSettingCount);
-    require(_list.outbidRate >= 10_000);
+    require(listLegalCheck(_list));
     // only governor can update a list
     require(accounts[lists[_listId].governorId].owner == msg.sender);
     _list.governorId = accountRoutine(_governor);
@@ -1219,6 +1217,16 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     if (len == 0) return (0);
 
     return (splits[_accountId][address(_token)][len - 1].min);
+  }
+
+  function listLegalCheck(List memory _list) internal view returns (bool) {
+    return (
+      _list.arbitrationSettingId < stakeCurateSettings.arbitrationSettingCount
+      && _list.outbidRate >= 10_000
+      && _list.challengerStakeRatio >= MIN_CHALLENGER_STAKE_RATIO
+      && _list.ageForInclusion <= MAX_AGE_FOR_INCLUSION
+      && _list.retractionPeriod <= MIN_RETRACTION_PERIOD
+    );
   }
 
   /**
