@@ -772,13 +772,20 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
 
     if (
       // refund + small burn checks
+
       // a. edition timestamp is too early compared to listVersion timestamp.
       // editions of outdated versions are unincluded and thus cannot be challenged
       // this also protects challenger from malicious list updates snatching the challengerStake
       // this has to burn, otherwise self-challengers can camp challenges by using a bogus list
       // honest participants could become affected by this if unlucky, or interacting with
-      // malicious list, they should ask for a refund then.
-      commit.editionTimestamp < list.versionTimestamp
+      // malicious list
+  
+      // > why not just check itemState == ItemState.Outdated ?
+      // because: frontrun commit -> list update -> item refresh/edit -> reveal challenge.
+      // Outdated is also a condition that would trigger this refund + burn.
+      // but since ItemState.Outdated is only true if this check is true,
+      // it would be redundant to check.
+      commit.editionTimestamp <= list.versionTimestamp
       // b. retracted, a well timed sequence of bogus items could trigger these refunds.
       // when an item becomes retracted is completely predictable and should cause no ux issues.
       || itemState == ItemState.Retracted
