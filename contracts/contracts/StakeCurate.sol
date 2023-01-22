@@ -538,12 +538,14 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     uint56 _itemId,
     uint32 _stake,
     uint32 _forListVersion,
+    uint32 _forItemAt,
     string calldata _ipfsUri,
     bytes calldata _harddata
   ) external {
     Item memory preItem = items[_itemId];
     List memory list = lists[preItem.listId];
     require(_forListVersion == list.versionTimestamp);
+    require(_forItemAt == preItem.lastUpdated);
     AdoptionState adoption = getAdoptionState(_itemId);
     uint56 senderId = accountRoutine(msg.sender);
 
