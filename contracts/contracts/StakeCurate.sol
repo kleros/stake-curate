@@ -27,7 +27,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used }
   /**
-   * @dev "Adoption" pretty much means "you can / cannot edit or refresh".
+   * @dev "Adoption" pretty much means "you can / cannot edit without passing x stake".
    *  To avoid redundancy, this applies either if new owner is different or not.
    */
   enum AdoptionState { FullAdoption, MatchOrRaise }
@@ -724,7 +724,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       // malicious list
   
       // > why not just check itemState == ItemState.Outdated ?
-      // because: frontrun commit -> list update -> item refresh/edit -> reveal challenge.
+      // because: frontrun commit -> list update -> item edit -> reveal challenge.
       // Outdated is also a condition that would trigger this refund + burn.
       // but since ItemState.Outdated is only true if this check is true,
       // it would be redundant to check.
