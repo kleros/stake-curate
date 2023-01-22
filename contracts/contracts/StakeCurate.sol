@@ -738,6 +738,14 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       // a sniper controlling the arbitrator could otherwise conditionally
       // remove or keep an item on bogus lists, allowing themselves to trigger refunds.
       || itemState == ItemState.Removed
+      // e. item owner can withdraw at reveal time.
+      // this is predictable. the length of the period doesn't change.
+      // another account could have taken ownership over the item, but
+      // accounts with withdrawing timestamp > 0 cannot take ownership.
+      || (
+        accounts[item.accountId].withdrawingTimestamp > 0
+        && accounts[item.accountId].withdrawingTimestamp <= block.timestamp
+      )
     ) {
       // burn here
       address challenger = accounts[commit.challengerId].owner;
