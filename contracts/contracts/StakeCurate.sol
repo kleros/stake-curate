@@ -201,8 +201,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     bytes _harddata
   );
 
-  event ItemRefreshed(uint56 indexed _itemId, uint56 indexed _accountId, uint32 _stake);
-
   event ItemStartRetraction(uint56 indexed _itemId);
   event ItemStopRetraction(uint56 indexed _itemId);
 
@@ -611,67 +609,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
 
     item.retractionTimestamp = uint32(block.timestamp);
     emit ItemStartRetraction(_itemId);
-  }
-
-  /**
-   * @dev Updates lastUpdated timestamp of an item. It also reclaims the item if
-   * sender is different from previous owner, according to adoption rules.
-   * The difference with editItem is that refreshItem doesn't create a new edition.
-   * @param _itemId Item to refresh.
-   * @param _stake How much collateral backs up the item, compressed.
-   * @param _forListVersion Timestamp of the version this action is intended for.
-   * If list governor were to frontrun a version change, then it reverts.
-   */
-  function refreshItem(uint56 _itemId, uint32 _stake, uint32 _forListVersion) external {
-    Item memory preItem = items[_itemId];
-    List memory list = lists[preItem.listId];
-    require(_forListVersion == list.versionTimestamp);
-
-    uint56 senderId = accountRoutine(msg.sender);
-    AdoptionState adoption = getAdoptionState(_itemId);
-
-    if (adoption == AdoptionState.FullAdoption) {
-      require(_stake >= list.requiredStake);
-    } else {
-      if (senderId == preItem.accountId || preItem.state == ItemState.Disputed) {
-        // if sender is current owner, it's enough if they match
-        // also, if item is currently challenged, to cover an edge case in which
-        // item owner doesn't bother to raise stakes in a highly disputed item
-        // that has a prohibitively high outbidRatio, anyone can take the item
-        // if they match the bid.
-        require(_stake >= preItem.nextStake);
-      } else {
-        // outbidding by rate is required
-        uint256 decompressedCurrentStake = Cint32.decompress(preItem.nextStake);
-        uint256 neededStake = decompressedCurrentStake  * list.outbidRate / 10_000;
-        require(Cint32.decompress(_stake) >= neededStake);
-      }
-    }
-
-    require(_stake <= list.maxStake);
-    require(accounts[senderId].withdrawingTimestamp == 0);
-
-    // instead of further checks, just change the item and do a status check.
-    Item storage item = items[_itemId];
-    // to refresh, we change values directly to avoid "rebuilding" the harddata
-    item.accountId = senderId;
-    item.retractionTimestamp = 0;
-    item.state = preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Collateralized;
-    item.lastUpdated = uint32(block.timestamp);
-    item.regularStake = adoption == AdoptionState.FullAdoption ? _stake : getCanonItemStake(_itemId);
-    item.nextStake = _stake;
-    if (adoption == AdoptionState.FullAdoption) {
-      // we do it like this, because we don't need to load this slot otherwise.
-      item.liveSince = uint32(block.timestamp);
-    }
-
-    // if not Collateralized, something went wrong so it's reverted.
-    // you can also edit items while they are Disputed, as that doesn't change
-    // anything about the Dispute in place.
-    ItemState newState = getItemState(_itemId);
-    require(newState == ItemState.Collateralized || newState == ItemState.Disputed);    
-
-    emit ItemRefreshed(_itemId, senderId, _stake);
   }
 
   /**
