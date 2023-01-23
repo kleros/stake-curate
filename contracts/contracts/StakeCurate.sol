@@ -83,14 +83,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     uint32 freespace;
   }
 
-  struct BalanceSplit {
-    // moment the split begins
-    // a split ends when the following split starts, or block.timestamp if last.
-    uint32 startTime;
-    // minimum amount there was, from the startTime, to the end of the split.
-    uint32 min;
-  }
-
   struct List {
     uint56 governorId; // governor needs an account
     uint32 requiredStake;
@@ -267,7 +259,26 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
 
   mapping(address => uint56) public accountIdOf;
   mapping(uint56 => Account) public accounts;
-  mapping(uint56 => mapping(address => BalanceSplit[])) public splits;
+  
+  /**
+   * @dev These are records of the balances that a certain account
+   *  held of a certain token at a certain time.
+   *  We track these to be able to compute
+   *  whether if an item has passed through the optimistic period
+   *  and stayed collateralized, or not.
+   *
+   * These are read in the following way:
+   * - Each uint32[8] is known as a "pack"
+   * - Each record contains a timestamp and a balance
+   * - The first four uint32s are timestamps, the next four uint32s balances.
+   * - If a timestamp is in [i], its balance lives in [i + 4]
+   * - If a timestamp == 0, that means the previous record was the last.
+   *
+   * The contract will append and purge records under certain circumstances.
+   *  Specifically, it will append when the balance is greater (and enough time passed)
+   *  And it will purge when the balance is equal or lower. 
+   */
+  mapping(uint56 => mapping(IERC20 => uint32[8][])) public splits;
 
   mapping(uint56 => List) public lists;
   mapping(uint56 => Item) public items;
@@ -352,13 +363,13 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     uint56 accountId = accountRoutine(_recipient);
 
     uint256 newFreeStake = Cint32.decompress(getCompressedFreeStake(accountId, _token)) + _amount;
-    balanceRecordRoutine(accountId, address(_token), newFreeStake);
+    balanceRecordRoutine(accountId, _token, newFreeStake);
     // if _amount > 2^255, the _amount below will break and appear negative.
     emit AccountBalanceChange(accountId, _token, int256(_amount));
     // if the sender passes value, we update the value of the accountId
     if (msg.value > 0) {
       newFreeStake = Cint32.decompress(getCompressedFreeStake(accountId, valueToken)) + msg.value;
-      balanceRecordRoutine(accountId, address(_token), newFreeStake);
+      balanceRecordRoutine(accountId, _token, newFreeStake);
       emit AccountBalanceChange(accountId, _token, int256(msg.value));
     }
   }
@@ -415,7 +426,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     uint256 freeStake = Cint32.decompress(getCompressedFreeStake(accountId, _token));
     require(freeStake >= _amount); // cannot afford to withdraw that much
     // guard
-    balanceRecordRoutine(accountId, address(_token), freeStake - _amount);
+    balanceRecordRoutine(accountId, _token, freeStake - _amount);
     // withdraw
     processWithdrawal(msg.sender, _token, _amount, 0);
     emit AccountBalanceChange(accountId, _token, -int256(_amount));
@@ -801,8 +812,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       item.state = ItemState.Disputed;
 
       // we lock the amounts in owner's account
-      balanceRecordRoutine(item.accountId, address(list.token), ownerTokenAmount - itemStakeAfterRatio);
-      balanceRecordRoutine(item.accountId, address(valueToken), ownerValueAmount - arbFees - valueBurn);
+      balanceRecordRoutine(item.accountId, list.token, ownerTokenAmount - itemStakeAfterRatio);
+      balanceRecordRoutine(item.accountId, valueToken, ownerValueAmount - arbFees - valueBurn);
 
       // we send the burned value to burner
       payable(stakeCurateSettings.burner).send(valueBurn);
@@ -936,10 +947,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       }
       // free the locked stake
       uint256 newFreeStake = Cint32.decompress(compressedFreeStake) + Cint32.decompress(dispute.itemStake);
-      balanceRecordRoutine(dispute.itemOwnerId, address(dispute.token), newFreeStake);
+      balanceRecordRoutine(dispute.itemOwnerId, dispute.token, newFreeStake);
       // return the value to the item owner
       uint256 newValueFreeStake = Cint32.decompress(compressedValueFreeStake) + Cint32.decompress(dispute.valueStake);
-      balanceRecordRoutine(dispute.itemOwnerId, address(valueToken), newValueFreeStake);
+      balanceRecordRoutine(dispute.itemOwnerId, valueToken, newValueFreeStake);
       // send challenger stake as compensation to item owner
       processWithdrawal(ownerAccount.owner, dispute.token, Cint32.decompress(dispute.challengerStake), BURN_RATE);
     }
@@ -1029,9 +1040,9 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       return false;
     } else if (item.lastUpdated + list.ageForInclusion > block.timestamp) {
       return false;
-    } else if (!continuousBalanceCheck(item.accountId, address(list.token), compressedItemStake, uint32(block.timestamp) - list.ageForInclusion)) {
+    } else if (!continuousBalanceCheck(item.accountId, list.token, compressedItemStake, uint32(block.timestamp) - list.ageForInclusion)) {
       return false;
-    } else if (!continuousBalanceCheck(item.accountId, address(valueToken), Cint32.compress(valueNeeded), uint32(block.timestamp) - list.ageForInclusion)) {
+    } else if (!continuousBalanceCheck(item.accountId, valueToken, Cint32.compress(valueNeeded), uint32(block.timestamp) - list.ageForInclusion)) {
       return false;
     } else {
       return true;
@@ -1092,43 +1103,64 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
    * @param _token Token to record. It could be address(0), which means value.
    * @param _freeStake The new latest balance.
    */
-  function balanceRecordRoutine(uint56 _accountId, address _token, uint256 _freeStake) internal {
-    BalanceSplit[] storage arr = splits[_accountId][_token];
-    BalanceSplit memory curr = arr[arr.length-1];
+  function balanceRecordRoutine(uint56 _accountId, IERC20 _token, uint256 _freeStake) internal {
+    uint32[8][] storage arr = splits[_accountId][_token];
     // the way Cint32 works, comparing values before or after decompression
     // will return the same result. so, we don't even compress / decompress the splits.
     uint32 compressedStake = Cint32.compress(_freeStake);
-    if (compressedStake <= curr.min) {
-      // when lower, initiate the following process:
-      // starting from the end, go through all the splits, and remove all splits
-      // such that have more or equal split.
-      // after iterating through this, create a new split with the last timestamp
-      while (arr.length > 0 && compressedStake <= curr.min) {
-        curr = arr[arr.length-1];
-        arr.pop();
-      }
-      arr.push(BalanceSplit({
-          startTime: curr.startTime,
-          min: compressedStake
-        }));
+    
+    // if len is zero, just append the first split.
+    uint256 preLen = arr.length;
+    if (preLen == 0) {
+        uint32[8] memory pack;
+        pack[0] = uint32(block.timestamp);
+        pack[4] = compressedStake;
+        arr.push(pack);
     } else {
-      // since it's higher, check last record time to consider appending.
-      if (block.timestamp >= curr.startTime + BALANCE_SPLIT_PERIOD) {
-        // out of the period. a new split will be made.
-        splits[_accountId][_token].push(BalanceSplit({
-          startTime: uint32(block.timestamp),
-          min: compressedStake
-        }));
-      // if it's higher and within the split, we override the amount.
-      // qa : why not override the startTime as well?
-      // because then, if someone were to frequently update their amounts,
-      // the last record would non-stop get pushed to the future.
-      // it would be a rare occurrance if the periods are small, but rather not
-      // risk it. this compromise only reduces the guaranteed collateralization requirement
-      // by the split period.
-      } else {
-        splits[_accountId][_token][arr.length-1].min = compressedStake;
-      }
+        // we get to the last pack.
+        (uint32[8] memory prepack, uint256 i) = loadPack(arr, preLen);
+
+        uint32 balance = prepack[i + 4];
+        uint32 startsAt;
+        if (compressedStake <= balance) {
+            // when lower, initiate the following process:
+            // starting from the end, go through all the splits, and remove all splits
+            // such that have more or equal split.
+            // after iterating through this, create a new split with the last timestamp
+            while (compressedStake <= balance) {
+                startsAt = prepack[i];
+                if (i > 0) {
+                    i--;
+                } else {
+                    i = 3;
+                    arr.pop();
+                    preLen--;
+                    if (preLen == 0) {
+                        break;
+                    }
+                    prepack = arr[preLen - 1];
+                }
+                // if solidity reverts when you try to access an invalid element of array, this breaks.
+                balance = prepack[i + 4];
+            }
+            oneCellUp(arr, preLen, i, startsAt, compressedStake);
+        } else {
+            // since it's higher, check last record time to consider appending.
+            startsAt = prepack[i];
+            if (block.timestamp >= startsAt + BALANCE_SPLIT_PERIOD) {
+                // out of the period. a new split will be made.
+                oneCellUp(arr, preLen, i, uint32(block.timestamp), compressedStake);
+            } else {
+                // if it's higher and within the split, we override the amount.
+                // qa : why not override the startTime as well?
+                // because then, if someone were to frequently update their amounts,
+                // the last record would non-stop get pushed to the future.
+                // it would be a rare occurrance if the periods are small, but rather not
+                // risk it. this compromise only reduces the guaranteed collateralization requirement
+                // by the split period.
+                arr[preLen-1][i + 4] = compressedStake;
+            }
+        }
     }
   }
 
@@ -1140,20 +1172,26 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
    * @param _targetTime We check if the amount is enough at every point after this timestamp.
    */
   function continuousBalanceCheck(
-    uint56 _accountId, address _token, uint32 _requiredStake, uint32 _targetTime
-  ) internal view returns (bool) {
-    uint256 splitPointer = splits[_accountId][_token].length - 1;
+    uint56 _accountId, IERC20 _token, uint32 _requiredStake, uint32 _targetTime
+  ) public view returns (bool) {
+    uint32[8][] storage arr = splits[_accountId][_token];
+    uint256 len = arr.length;
+    if (len == 0) return false;
+    
+    (uint32[8] memory pack, uint256 i) = loadPack(arr, len);
 
-    // we want to process pointer 0, so go until we overflow
-    while (splitPointer != type(uint256).max) {
-      BalanceSplit memory split = splits[_accountId][_token][splitPointer];
-      // we test if we can pass the split.
-      // we don't decompress because comparisons work without decompressing
-      if (_requiredStake > split.min) return (false);
-      // we survived, and now check within the split.
-      if (split.startTime <= _targetTime) return (true);
-      
-      unchecked { splitPointer--; }
+    while (len > 0) {
+      pack = arr[len - 1];
+      do {
+        // we test if we can pass the split.
+        // we don't decompress because comparisons work without decompressing
+        if (_requiredStake > pack[i + 4]) return (false);
+        // we survived, and now check if time is within the split.
+        if (pack[i] <= _targetTime) return (true);
+        unchecked {i--;}
+      } while (i < 4);
+      len--;
+      i = 3;
     }
 
     // target is beyong the earliest record, not enough time for collateralization.
@@ -1166,10 +1204,68 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
    * @param _token Token to check. It could be address(0), which means value.
    */
   function getCompressedFreeStake(uint56 _accountId, IERC20 _token) public view returns (uint32) {
-    uint256 len = splits[_accountId][address(_token)].length;
+    // we get to the last pack.
+    uint32[8][] storage arr = splits[_accountId][_token];
+    uint256 len = arr.length;
     if (len == 0) return (0);
 
-    return (splits[_accountId][address(_token)][len - 1].min);
+    (uint32[8] memory pack, uint256 i) = loadPack(arr, len);
+
+    return pack[i + 4];
+  }
+
+    /**
+   * @dev Get pack and i pointer for a pack.
+   * @param _arr Array containing the balance split packs.
+   * @param _len Length of this array, passed to skip a storage load.
+   */
+  function loadPack(uint32[8][] storage _arr, uint256 _len) internal view returns(uint32[8] memory pack, uint256 i) {
+    pack = _arr[_len - 1];
+    // we get the last split from this pack.
+    // we may need to do up to 3 checks. if you get a cell with a 0, it's on the prev index.
+    if (pack[1] == 0) {
+        i = 0;
+    } else if (pack[2] == 0) {
+        i = 1;
+    } else if (pack[3] == 0) {
+        i = 2;
+    } else {
+        i = 3;
+    }
+  }
+
+  /**
+   * @dev Mutate the splits array to introduce a new split.
+   *  Handles the logic required to either push new packs to the array, or mutate last pack.
+   * @param _arr Array containing the balance split packs.
+   * @param _len Length of this array, passed to skip a storage load.
+   * @param _i "i" value of the current latest pack.
+   * @param _startsAt value to append.
+   * @param _balance value to append. 
+   */
+  function oneCellUp(uint32[8][] storage _arr, uint256 _len, uint256 _i, uint32 _startsAt, uint32 _balance) internal {
+    if (_i == 3) {
+        // out of space, create new pack
+        uint32[8] memory newpack;
+        newpack[0] = _startsAt;
+        newpack[4] = _balance;
+        _arr.push(newpack);
+    } else {
+        // write
+        uint32[8] memory lastpack;
+        lastpack[_i+1] = _startsAt;
+        lastpack[_i+5] = _balance;
+        // now write zeroes on spare timestamps
+        // there are two cases this needs to be done, if i == 0 or i == 1.
+        if (_i == 0) {
+            lastpack[2] = 0;
+            lastpack[3] = 0;
+        } else if (_i == 1) {
+            lastpack[3] = 0;
+        }
+        // you dont need to erase the balances.
+        _arr[_len-1] = lastpack;
+    }
   }
 
   function listLegalCheck(List memory _list) internal view returns (bool) {
