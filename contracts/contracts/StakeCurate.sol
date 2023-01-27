@@ -1310,7 +1310,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       _list.arbitrationSettingId < stakeCurateSettings.arbitrationSettingCount
       && _list.challengerStakeRatio >= MIN_CHALLENGER_STAKE_RATIO
       && _list.ageForInclusion <= MAX_AGE_FOR_INCLUSION
-      && _list.retractionPeriod <= MIN_RETRACTION_PERIOD
+      && _list.retractionPeriod >= MIN_RETRACTION_PERIOD
     );
   }
 
