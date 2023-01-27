@@ -27,12 +27,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used }
   /**
-   * @dev "Adoption" pretty much means "you can / cannot edit without passing x stake".
-   *  To avoid redundancy, this applies either if new owner is different or not.
-   */
-  enum AdoptionState { FullAdoption, MatchOrRaise }
-
-  /**
    * @dev "+" means the state can be stored. Else, is dynamic. Meanings:
    * +Nothing: does not exist yet.
    * Collateralized: item can be challenged. it could either be Included or Young.
@@ -54,6 +48,22 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     Outdated,
     Retracted
   }
+
+  /**
+   * @dev "Adoption" is about changing the owner of the item.
+   *  Revival: item is non-included, so it can change owner at any price.
+   *  MatchOrRaise: item can be adopted, but the stake needs to be equal or greater.
+   *   At the moment, this will only occur when item is Disputed. Since the item has
+   *   been Disputed, that means the original owner can get compensated. 
+   *  None: item can't be adopted at all. It can still be edited and handled by current owner.
+   *
+   * These restrictions are born due to a need to ensure compensation goes directly
+   *  to owners. If items could be adopted freely, then griefers could just adopt the
+   *  item away from them and self challenge. Then, there would be a lot of friction
+   *  to move the burned funds towards the affected party in order for them to raise
+   *  the stakes of the item and protect themselves.
+   */
+  enum AdoptionState { Revival, MatchOrRaise, None }
 
   uint256 internal constant RULING_OPTIONS = 2;
 
@@ -95,7 +105,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
     IERC20 token;
     uint32 challengerStakeRatio; // (basis points) challenger stake in proportion to the item stake
     uint32 ageForInclusion; // how much time from Young to Included, in seconds
-    uint32 outbidRate; // how much is needed for a different owner to adopt an item, in basis points.
+    uint32 freespace2;
   }
 
   struct Item {
@@ -555,15 +565,16 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
   ) external {
     Item memory preItem = items[_itemId];
     List memory list = lists[preItem.listId];
+    // todo you're not checking if the item even exists. you need to assert its not "nothing"
     require(_forListVersion == list.versionTimestamp);
     require(_forItemAt == preItem.lastUpdated);
     AdoptionState adoption = getAdoptionState(_itemId);
     uint56 senderId = accountRoutine(msg.sender);
 
-    if (adoption == AdoptionState.FullAdoption) {
+    if (adoption == AdoptionState.Revival) {
       require(_stake >= list.requiredStake);
     } else {
-      if (senderId == preItem.accountId || preItem.state == ItemState.Disputed) {
+      if (preItem.accountId == senderId || adoption == AdoptionState.MatchOrRaise) {
         // if sender is current owner, it's enough if they match
         // also, if item is currently challenged, to cover an edge case in which
         // item owner doesn't bother to raise stakes in a highly disputed item
@@ -571,10 +582,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
         // if they match the bid.
         require(_stake >= preItem.nextStake);
       } else {
-        // outbidding by rate is required
-        uint256 decompressedCurrentStake = Cint32.decompress(preItem.nextStake);
-        uint256 neededStake = decompressedCurrentStake  * list.outbidRate / 10_000;
-        require(Cint32.decompress(_stake) >= neededStake);
+        // sender neither is current, neither can item be adopted.
+        revert();
       }
     }
 
@@ -588,10 +597,17 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       retractionTimestamp: 0,
       state: preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Collateralized,
       lastUpdated: uint32(block.timestamp),
-      regularStake: adoption == AdoptionState.FullAdoption ? _stake : getCanonItemStake(_itemId),
+      /**
+       * If the item wasn't included before this tx
+       *  nothing was collateralizing it, so the canonItemStake doesn't serve
+       *  any purpose and will be overwritten by the passed _stake.
+       * Otherwise, we will make the regularStake be the stake that was
+       *  considered to be collateralizing the item at the time of this function.
+       */
+      regularStake: adoption == AdoptionState.None ? getCanonItemStake(_itemId) : _stake,
       nextStake: _stake,
       freespace: 0,
-      liveSince: adoption == AdoptionState.FullAdoption ? uint32(block.timestamp) : preItem.liveSince,
+      liveSince: adoption == AdoptionState.Revival ? uint32(block.timestamp) : preItem.liveSince,
       freespace2: 0,
       harddata: _harddata
     });
@@ -1050,26 +1066,47 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
   }
 
   /**
-   * @dev This is used for two things:
-   *  - figure out whether if an item has gone from unincluded to included
-   *  - figure out if the stake of the item needs to be matched, outbid, or can be ignored.
+   * @dev Dynamically obtains the AdoptionState of an item.
+   *  Refer to the definition of "AdoptionState" above.
    * @param _itemId Id of the item to check
    */
   function getAdoptionState(uint56 _itemId) public view returns (AdoptionState) {
     ItemState state = getItemState(_itemId);
-    if (state == ItemState.Removed || state == ItemState.Retracted || state == ItemState.Uncollateralized || state == ItemState.Outdated) {
-      return (AdoptionState.FullAdoption);
+    if (
+      /** equivalent to:
+        state == ItemState.Removed
+        || state == ItemState.Retracted
+        || state == ItemState.Uncollateralized
+        || state == ItemState.Outdated
+      */
+      state > ItemState.Disputed
+    ) {
+      return (AdoptionState.Revival);
     }
-    // now, we check if current owner can afford the nextStake, explicitly
-    // doesn't matter if this nextStake is not into effect yet. if it's no
-    // longer collateralized then if should be into adoption.
+
+    // before proceeding, we will check whether there's enough for nextStake.
+    // doesn't matter if this nextStake is not into effect yet.
     Item memory item = items[_itemId];
     uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, lists[item.listId].token);
+    // if it's no longer collateralized then it's a revival.
     if (compressedFreeStake < item.nextStake) {
-      return (AdoptionState.FullAdoption);
-    } else {
+      return (AdoptionState.Revival);
+    } 
+    // we check whether if item satisfies some other conditions for adoption:
+    // a. being Disputed
+    if (state == ItemState.Disputed) {
       return (AdoptionState.MatchOrRaise);
     }
+    // b. item is in retraction process
+    if (item.retractionTimestamp != 0) {
+      return (AdoptionState.MatchOrRaise);
+    }
+    // c. owner is within withdrawing process
+    if (accounts[item.accountId].withdrawingTimestamp != 0) {
+      return (AdoptionState.MatchOrRaise);
+    }
+    
+    return (AdoptionState.None);
   }
 
   /**
@@ -1271,7 +1308,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
   function listLegalCheck(List memory _list) internal view returns (bool) {
     return (
       _list.arbitrationSettingId < stakeCurateSettings.arbitrationSettingCount
-      && _list.outbidRate >= 10_000
       && _list.challengerStakeRatio >= MIN_CHALLENGER_STAKE_RATIO
       && _list.ageForInclusion <= MAX_AGE_FOR_INCLUSION
       && _list.retractionPeriod <= MIN_RETRACTION_PERIOD
