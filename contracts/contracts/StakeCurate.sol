@@ -11,7 +11,7 @@ pragma solidity ^0.8;
 import "./interfaces/IArbitrable.sol";
 import "./interfaces/IArbitrator.sol";
 import "./interfaces/IMetaEvidence.sol";
-import "./interfaces/ISimpleEvidence.sol";
+import "./interfaces/IPost.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./Cint32.sol";
 
@@ -22,7 +22,7 @@ import "./Cint32.sol";
  * @dev The stakes of the items are handled here. Handling arbitrary on-chain data is
  * possible, but many curation needs can be solved by keeping off-chain state availability.
  */
-contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
+contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
   enum Party { Staker, Challenger }
   enum DisputeState { Free, Used }
@@ -887,16 +887,16 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
   }
 
   /**
-   * @dev Submits evidence to an item. Evidence can be emitted at any time.
+   * @dev Submits post on an item. Posts can be emitted at any time.
    *  Item existence is not checked, since quality filtering would be done externally.
-   *  For example, if the item did not exist at the time the Evidence was emitted, then
+   *  For example, if the item did not exist at the time the Post was emitted, then
    *  it could be hidden.
    *  Assume this function will be the subject of spam and flood.
    * @param _itemId Id of the item to submit evidence to.
-   * @param _evidence IPFS uri linking to the evidence.
+   * @param _post IPFS uri linking to the post.
    */
-  function submitEvidence(uint56 _itemId, string calldata _evidence) external {
-    emit Evidence(_itemId, _evidence);
+  function submitPost(uint56 _itemId, string calldata _post) external {
+    emit Post(_itemId, _post);
   }
 
   /**
