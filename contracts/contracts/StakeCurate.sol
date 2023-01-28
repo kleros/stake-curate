@@ -946,9 +946,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
       payable(accounts[dispute.challengerId].owner).send(Cint32.decompress(dispute.valueStake));
     } else {
       // item owner won.
-      if (item.retractionTimestamp != 0) {
-        item.retractionTimestamp = uint32(block.timestamp);
-      }
       item.state = ItemState.Collateralized;
       // if list is not outdated, set item lastUpdated
       if (item.lastUpdated > list.versionTimestamp) {
@@ -959,6 +956,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence, ISimpleEvidence {
         // and the unlocked tokens are no longer enough by themselves to collateralize.
         // but it shouldn't be a problem anyway, since it will just become
         // uncollateralized and unchallengeable.
+        
+        // this is set here because item couldn't be challenged until now.
+        // so it needs to go through the period again, in case it was
+        // belonging to a list with ageForInclusion.
         item.lastUpdated = uint32(block.timestamp);
       }
       // free the locked stake
