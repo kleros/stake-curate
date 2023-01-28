@@ -157,9 +157,17 @@ Some caveats multiple arbitrators has:
 - extra gas expenses to read the arbitrator on storage on challenge reveals and rulings, and to keep track of the arbitrator for the Dispute (because, lists could change the arbitrator)
 - mapping to get localId requires arbitrator
 
+A way to go around the potential malicious arbitrators is, get the whitelist back in, but don't check for List Legality. Just, if arbitrator is not whitelisted, use a default arbitrator set by the contract (such as KlerosV2), making List Legality not a constrain.
+
 ## Why adoptions
 
-Adoptions mean that a different party can take liability over the inclusion of an item. Not having adoptions could allow accounts to squat and prevent others from fixing issues with an item, or reincluding it. So, this is mostly a safety feature. It also can be comfortable to just provide this as an option. Reasons why having adoptions is preferrable:
+Adoptions mean that a different user can take liability over the inclusion of an item. Not having adoptions could allow accounts to squat and prevent others from fixing issues with an item, or reincluding it. So, this is mostly a safety feature. It also can be comfortable to just provide this as an option.
+
+There are two types of adoptions considered:
+- *Revive Adoptions*, in which items that are non-included, become included.
+- *MatchOrRaise Adoptions*, in which items that are either Disputed or whose owner is performing actions that signal neglect (retracting the item, or withdrawing their stake), are up to auction. New owners can obtain ownership over it by either matching or raising the stake that is collateralizing the item.
+
+Reasons why having adoptions is preferrable:
 
 - If squatting is to be expected, for items that suffer the consequences (the item removed, and its `itemId` innaccessible), the history (editions, challenges, evidence...) of a single item could become dispersed across different `itemIds`.
 - Some List use cases can become easier if Items are expected to live under one slot. Two examples:
@@ -169,10 +177,10 @@ Adoptions mean that a different party can take liability over the inclusion of a
 Some examples on when this would be useful:
 
 - List updates to a new version, rendering all items outdated, and many item owners don't bother refreshing their items, so they stop being included. Parties interested in preserving the curated items could review them and batch "adopt" them, taking liability over them and getting them to be included again.
-  - Without adoptions, this actor may have to call `addItem` and it would consume extra calldata to resubmit everything.
+  - Without adoptions, this actor may have to call `addItem` and it would consume extra calldata to resubmit everything. Also, history for the previous item would disjoin.
 - An item continues being grief challenged, and the current owner doesn't raise the stakes. Someone takes ownership over the item and raises the stakes, so that the griefing attack is too expensive to continue.
 
-Adoptions is not a particularly difficult feature to implement, it's ingrained in the logic and it wouldn't save much code or complexity to remove it. Nothing close to adoptions was possible in the previous Curate applications, as the items essentially belong to no-one after they completed the period. It's a "nice to have" that we might regret not to have if we didn't have it.
+Adoptions is ingrained in the logic and it wouldn't save much code or complexity to remove it. This is because similar comparisons need to be made anyway to cover edge cases around raising stakes. It's a "nice to have".
 
 But, since Stake Curate will be upgradable by proxy, it could be removed now and added later if needed. Or the other way around.
 
@@ -181,12 +189,6 @@ But, since Stake Curate will be upgradable by proxy, it could be removed now and
 # Why
 
 I am going through the contract top to bottom and writing notes here on things that look notable.
-
-### Outbid Rate
-
-Some Lists may not want to allow adoptions, or may want new owners to significantly raise the item stake in order to justify disallowing the current user from owning the item. This was added as a defense mechanism
-
-Actually I believe Stake Curate could still work despite the Outbid Rate, since malicious actors could be drained of funds from squatting, if they refused to fix their items or maintain them (under some Policy requirements). "Defense mechanism"? Against funds from other users?
 
 ### Settings hardcoded as constants
 
