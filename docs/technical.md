@@ -124,6 +124,7 @@ These are some things that came up on the way, but were not fundamental. As they
 - Challenge types
 - Multiple Arbitrators
 - Adoptions
+- Posts and threads
 
 ## Why ERC20 stakes
 
@@ -184,7 +185,17 @@ Adoptions is ingrained in the logic and it wouldn't save much code or complexity
 
 But, since Stake Curate will be upgradable by proxy, it could be removed now and added later if needed. Or the other way around.
 
----
+## Why posts and threads
+
+Some context here: since ArbitratorV2, `Evidence` is meant to be submitted on the Arbitrator itself.
+
+They're just events meant to submit information related to an item. While submitting `Evidence` in the arbitrator can provide useful information regarding a dispute, these threads can be useful:
+
+- could be used to provide suplementary or contextual information that shouldn't be part of the item itself
+- the information posted does not necessarily have to relate to a specific dispute
+- information that could relate to multiple disputes does not need to be specifically submitted in all disputes
+
+Since implementation only requires an event and a method to emit it, it can fit in the main contract.
 
 # Why
 
