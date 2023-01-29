@@ -622,20 +622,15 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
   /**
    * @dev Starts an item retraction process.
+   *  To stop this retraction, owner is supposed to refresh the item.
    * @param _itemId Item to retract.
    */
   function startRetractItem(uint56 _itemId) external {
     Item storage item = items[_itemId];
-    Account memory account = accounts[item.accountId];
-    require(account.owner == msg.sender);
-    ItemState state = getItemState(_itemId);
-    require(
-      state != ItemState.Outdated
-      && state != ItemState.Removed
-      && state != ItemState.Retracted
-    );
+    require(accounts[item.accountId].owner == msg.sender);
+    // itemState is not checked, to make this method cheaper.
+    // no security issues if called on unincluded items.
     require(item.retractionTimestamp == 0);
-
     item.retractionTimestamp = uint32(block.timestamp);
     emit ItemStartRetraction(_itemId);
   }
