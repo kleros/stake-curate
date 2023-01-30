@@ -160,7 +160,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
   struct ArbitrationSetting {
     bytes arbitratorExtraData;
-    IArbitrator arbitrator;
   }
 
   // ----- EVENTS -----
@@ -176,7 +175,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   event AccountStartWithdraw(uint56 indexed _accountId);
   event AccountStopWithdraw(uint56 indexed _accountId);
 
-  event ArbitrationSettingCreated(uint56 indexed _arbSettingId, address _arbitrator, bytes _arbitratorExtraData);
+  event ArbitrationSettingCreated(uint56 indexed _arbSettingId, bytes _arbitratorExtraData);
 
   event ListUpdated(uint56 indexed _listId, List _list, string _metalist);
 
@@ -218,6 +217,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   // ----- CONSTANTS -----
 
   uint256 internal constant RULING_OPTIONS = 2;
+
+  IArbitrator internal constant ARBITRATOR = IArbitrator(0x988b3A538b618C7A603e1c11Ab82Cd16dbE28069);
 
   // these used to be variable settings, but due to edge cases they would cause
   // to previous lists if minimums were increased, or maximum decreased,
@@ -290,7 +291,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   mapping(uint56 => Item) public items;
   ChallengeCommit[] public challengeCommits;
   mapping(uint56 => DisputeSlot) public disputes;
-  mapping(address => mapping(uint256 => uint56)) public arbitratorAndDisputeIdToLocal;
+  mapping(uint256 => uint56) public disputeIdToLocal;
   mapping(uint56 => ArbitrationSetting) public arbitrationSettings;
 
   /** 
@@ -301,10 +302,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   constructor(address _governor, string memory _metaEvidence) {
     stakeCurateSettings.governor = _governor;
 
-    // purpose: prevent dispute zero from being used.
-    // this dispute has the ArbitrationSetting = 0. it will be
-    // made impossible to rule with, and kept with arbitrator = address(0) forever,
-    // so, it cannot be ruled. thus, requiring the disputeSlot != 0 on rule is not needed.
     stakeCurateSettings.arbitrationSettingCount = 1;
     disputes[0].state = DisputeState.Used;
     stakeCurateSettings.disputeCount = 1; // since disputes are incremental, prevent local dispute 0
@@ -314,7 +311,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     emit StakeCurateCreated();
     emit ChangedStakeCurateSettings(_governor);
     emit MetaEvidence(0, _metaEvidence);
-    emit ArbitrationSettingCreated(0, address(0), "");
+    emit ArbitrationSettingCreated(0, "");
   }
 
   // ----- PUBLIC FUNCTIONS -----
@@ -435,19 +432,15 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
   /**
    * @dev Create arbitrator setting. Will be immutable, and assigned to an id.
-   * @param _arbitrator The address of the IArbitrator
    * @param _arbitratorExtraData The extra data
    */
-  function createArbitrationSetting(address _arbitrator, bytes calldata _arbitratorExtraData)
+  function createArbitrationSetting(bytes calldata _arbitratorExtraData)
       external returns (uint56 id) {
     unchecked {id = stakeCurateSettings.arbitrationSettingCount++;}
-    // address 0 cannot be arbitrator. makes id overflow attacks more expensive.
-    require(_arbitrator != address(0));
     arbitrationSettings[id] = ArbitrationSetting({
-      arbitrator: IArbitrator(_arbitrator),
       arbitratorExtraData: _arbitratorExtraData
     });
-    emit ArbitrationSettingCreated(id, _arbitrator, _arbitratorExtraData);
+    emit ArbitrationSettingCreated(id, _arbitratorExtraData);
   }
 
   /**
@@ -704,7 +697,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     List memory list = lists[item.listId];
 
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
-    uint256 arbFees = arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData);
+    uint256 arbFees = ARBITRATOR.arbitrationCost(arbSetting.arbitratorExtraData);
     uint256 valueBurn = arbFees * BURN_RATE / 10_000;
 
     uint256 ownerValueAmount = Cint32.decompress(getCompressedFreeStake(item.accountId, valueToken));
@@ -796,14 +789,13 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
       // create dispute
       uint256 arbitratorDisputeId =
-        arbSetting.arbitrator.createDispute{
+        ARBITRATOR.createDispute{
           value: arbFees}(
           RULING_OPTIONS, arbSetting.arbitratorExtraData
         );
       // if this reverts, the arbitrator is malfunctioning. the commit will revoke
-      require(arbitratorAndDisputeIdToLocal[address(arbSetting.arbitrator)][arbitratorDisputeId] == 0);
-      arbitratorAndDisputeIdToLocal
-        [address(arbSetting.arbitrator)][arbitratorDisputeId] = id;
+      require(disputeIdToLocal[arbitratorDisputeId] == 0);
+      disputeIdToLocal[arbitratorDisputeId] = id;
 
       item.state = ItemState.Disputed;
 
@@ -838,7 +830,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       // ERC 1497
       // evidenceGroupId is the itemId, since it's unique per item
       emit Dispute(
-        arbSetting.arbitrator, arbitratorDisputeId,
+        ARBITRATOR, arbitratorDisputeId,
         stakeCurateSettings.currentMetaEvidenceId, _itemId
       );
       // reason is not emitted as evidence, it was emitted in CommitReveal already.
@@ -885,30 +877,26 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
    * @param _ruling Ruling of the dispute. If 0 or 1, submitter wins. Else (2) challenger wins
    */
   function rule(uint256 _disputeId, uint256 _ruling) external override {
+    require(msg.sender == address(ARBITRATOR));
+    require(disputeIdToLocal[_disputeId] != 0);
+  
     // 1. get slot from dispute
-    uint56 localDisputeId = arbitratorAndDisputeIdToLocal[msg.sender][_disputeId];
-    DisputeSlot memory dispute =
-      disputes[localDisputeId];
-    require(msg.sender == address(arbitrationSettings[dispute.arbitrationSetting].arbitrator));
-    // require above removes the need to require disputeSlot != 0.
-    // because disputes[0] has arbitrationSettings[0] which has arbitrator == address(0)
-    // and no one will be able to call from address(0)
-
+    uint56 localDisputeId = disputeIdToLocal[_disputeId];
+    DisputeSlot memory dispute = disputes[localDisputeId];
     // 2. refunds gas. having reached this step means
     // dispute.state == DisputeState.Used
     // deleting the mapping makes the arbitrator unable to recall
     // this function*
     // * bad arbitrator can reuse a disputeId after ruling.
-    arbitratorAndDisputeIdToLocal[msg.sender][_disputeId] = 0;
+    disputeIdToLocal[_disputeId] = 0;
+    // destroy the disputeSlot information, to trigger refunds, and guard from reentrancy.
+    delete disputes[localDisputeId];
 
     Item storage item = items[dispute.itemId];
     Account memory ownerAccount = accounts[dispute.itemOwnerId];
     List memory list = lists[item.listId];
     uint32 compressedFreeStake = getCompressedFreeStake(dispute.itemOwnerId, dispute.token);
     uint32 compressedValueFreeStake = getCompressedFreeStake(dispute.itemOwnerId, valueToken);
-    
-    // destroy the disputeSlot information, to trigger refunds, and guard from reentrancy.
-    delete disputes[localDisputeId];
 
     // we still remember the original dispute fields.
 
@@ -951,11 +939,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       // send challenger stake as compensation to item owner
       processWithdrawal(ownerAccount.owner, dispute.token, Cint32.decompress(dispute.challengerStake), BURN_RATE);
     }
-    emit Ruling(
-      arbitrationSettings[dispute.arbitrationSetting].arbitrator,
-      _disputeId,
-      _ruling
-    );
+    emit Ruling(ARBITRATOR, _disputeId, _ruling);
   }
 
   /**
@@ -971,7 +955,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
     uint256 valueNeeded =
-      arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData)
+      ARBITRATOR.arbitrationCost(arbSetting.arbitratorExtraData)
       * BURN_RATE / 10_000;
 
     if (
@@ -1030,7 +1014,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
     ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
     uint256 valueNeeded =
-      arbSetting.arbitrator.arbitrationCost(arbSetting.arbitratorExtraData)
+      ARBITRATOR.arbitrationCost(arbSetting.arbitratorExtraData)
       * BURN_RATE / 10_000;
     
     if (accounts[item.accountId].couldWithdrawAt + list.ageForInclusion > block.timestamp) {
