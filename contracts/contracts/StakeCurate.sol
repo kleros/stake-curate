@@ -91,7 +91,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   struct List {
     uint56 governorId; // governor needs an account
     uint32 requiredStake;
-    uint32 retractionPeriod; 
     uint56 arbitrationSettingId;
     uint32 versionTimestamp;
     uint32 maxStake; // protects from some bankrun attacks
@@ -233,11 +232,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
   // prevents relevant historical balance checks from being too long
   uint32 internal constant MAX_AGE_FOR_INCLUSION = 40 days;
-  // min seconds for retraction in any list
-  // if a list were to allow having a retractionPeriod that is too low
-  // compared to the minimum time for revealing a commit, that would make
-  // having an item be retracted unpredictable at commit time. 
-  uint32 internal constant MIN_RETRACTION_PERIOD = 1 days;
   uint32 internal constant WITHDRAWAL_PERIOD = 7 days;
 
   // maximum size, in time, of a balance record. they are kept in order to
@@ -248,6 +242,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   uint32 internal constant MIN_TIME_FOR_REVEAL = 5 minutes;
   // seconds until a challenge commit is too old
   // this is also the amount of time it takes for an item to be held by the nextStake
+  // this is also the amount of time it takes for an item to be retracted
   uint32 internal constant MAX_TIME_FOR_REVEAL = 1 hours;
 
   /**
@@ -968,7 +963,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     } else if (
         // gone fully through retraction
         item.retractionTimestamp != 0
-        && item.retractionTimestamp + list.retractionPeriod <= block.timestamp
+        && item.retractionTimestamp + MAX_TIME_FOR_REVEAL <= block.timestamp
     ) {
       return (ItemState.Retracted);
     } else if (item.lastUpdated <= list.versionTimestamp) {
@@ -1275,7 +1270,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       _list.arbitrationSettingId < stakeCurateSettings.arbitrationSettingCount
       && _list.challengerStakeRatio >= MIN_CHALLENGER_STAKE_RATIO
       && _list.ageForInclusion <= MAX_AGE_FOR_INCLUSION
-      && _list.retractionPeriod >= MIN_RETRACTION_PERIOD
     );
   }
 
