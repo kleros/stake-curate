@@ -139,8 +139,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     IERC20 token;
     ///
     uint56 challengerId;
-    uint32 editionTimestamp;
-    uint168 freespace;
+    uint200 freespace;
   }
 
   struct DisputeSlot {
@@ -203,8 +202,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
   event ChallengeCommitted(
     uint256 indexed _commitIndex, uint56 indexed _challengerId,
-    IERC20 _token, uint32 _tokenAmount, uint32 _valueAmount,
-    uint32 _editionTimestamp
+    IERC20 _token, uint32 _tokenAmount, uint32 _valueAmount
   );
 
   event CommitReveal(
@@ -244,9 +242,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   // maximum size, in time, of a balance record. they are kept in order to
   // dynamically find out the age of items.
   uint32 internal constant BALANCE_SPLIT_PERIOD = 6 hours;
-
-  // span of time granted to challenger to reference previous editions
-  uint32 internal constant CHALLENGE_WINDOW = 2 minutes;
 
   // seconds until a challenge reveal can be accepted
   uint32 internal constant MIN_TIME_FOR_REVEAL = 5 minutes;
@@ -636,14 +631,12 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
    *  the challenger places a deposit in order to make this commit.
    * @param _token Token to commit the challenge with.
    * @param _compressedTokenAmount How many tokens to commit.
-   * @param _editionTimestamp Edition of the item being targeted with this challenge.
    * @param _commitHash h(salt, itemId, ratio, reason)
    *  This is a regular hash, not a signature. eip-712 is not needed.
    */
   function commitChallenge(
     IERC20 _token,
     uint32 _compressedTokenAmount,
-    uint32 _editionTimestamp,
     bytes32 _commitHash
   ) external payable returns (uint256 _commitId) {
     // if attacker tries to pass _token == 0x0, the require below should fail.
@@ -652,9 +645,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
         msg.sender, address(this), Cint32.decompress(_compressedTokenAmount)
       )
     );
-    // if this transaction is mined too late, revert
-    // if _editionTimestamp is over the block.timestamp, it will overflow and revert.
-    require((block.timestamp - _editionTimestamp) <= CHALLENGE_WINDOW);
     uint32 compressedvalue = Cint32.compress(msg.value);
     uint56 challengerId = accountRoutine(msg.sender);
     challengeCommits.push(ChallengeCommit({
@@ -664,12 +654,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       valueAmount: compressedvalue,
       token: _token,
       challengerId: challengerId,
-      editionTimestamp: _editionTimestamp,
       freespace: 0
     }));
     emit ChallengeCommitted(
       challengeCommits.length - 1, challengerId, _token,
-      _compressedTokenAmount, compressedvalue, _editionTimestamp
+      _compressedTokenAmount, compressedvalue
     );
     return (challengeCommits.length - 1);
   }
@@ -734,7 +723,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     if (
       // refund + small burn checks
 
-      // a. edition timestamp is too early compared to listVersion timestamp.
+      // a. timestamp is too early compared to listVersion timestamp.
       // editions of outdated versions are unincluded and thus cannot be challenged
       // this also protects challenger from malicious list updates snatching the challengerStake
       // this has to burn, otherwise self-challengers can camp challenges by using a bogus list
@@ -746,7 +735,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       // Outdated is also a condition that would trigger this refund + burn.
       // but since ItemState.Outdated is only true if this check is true,
       // it would be redundant to check.
-      commit.editionTimestamp <= list.versionTimestamp
+      commit.timestamp <= list.versionTimestamp
       // b. retracted, a well timed sequence of bogus items could trigger these refunds.
       // when an item becomes retracted is completely predictable and should cause no ux issues.
       || itemState == ItemState.Retracted
@@ -781,7 +770,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       // b. not enough valueAmount for arbitrationCost
       || challengerValueAmount < (arbFees + valueBurn)
       // c. the item went from unincluded to included after the targeted edition
-      || commit.editionTimestamp < item.liveSince
+      || commit.timestamp < item.liveSince
       // d. wrong token
       || commit.token != list.token
       // e. item is not either Collateralized or Uncollateralized
