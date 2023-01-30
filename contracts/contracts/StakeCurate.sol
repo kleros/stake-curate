@@ -144,11 +144,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   struct DisputeSlot {
     uint56 challengerId;
     uint56 itemId;
-    uint56 arbitrationSetting;
     DisputeState state;
     uint32 itemStake; // unlocks to submitter if Keep, sent to challenger if Remove
     uint32 valueStake; // to be awarded to the side that wins the dispute. 
-    uint16 freespace;
+    uint72 freespace;
     // ----
     IERC20 token;
     uint32 challengerStake; // put by the challenger, sent to whoever side wins.
@@ -810,7 +809,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       disputes[id] = DisputeSlot({
         itemId: _itemId,
         challengerId: commit.challengerId,
-        arbitrationSetting: list.arbitrationSettingId,
         state: DisputeState.Used,
         itemStake: Cint32.compress(itemStakeAfterRatio),
         valueStake: Cint32.compress(arbFees + valueBurn),
