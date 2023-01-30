@@ -65,16 +65,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
    */
   enum AdoptionState { Revival, MatchOrRaise, None }
 
-  uint256 internal constant RULING_OPTIONS = 2;
-
+  /**
+   * @dev Stores the governor, metaEvidenceId, and counters
+   */
   struct StakeCurateSettings {
-    // receives the burns, could be an actual burn address like address(0)
-    // could alternatively act as some kind of public goods funding, or rent.
-    address burner;
-    uint32 currentMetaEvidenceId;
-    uint64 freespace;
-    // --- 2nd slot
-    // can change the burner and the governor
+    // can change the governor and update metaEvidence
     address governor;
     uint56 itemCount;
     uint40 freespace2;
@@ -83,7 +78,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     uint56 disputeCount;
     uint56 accountCount;
     uint56 arbitrationSettingCount;
-    uint32 freespace3;
+    uint32 currentMetaEvidenceId;
   }
 
   struct Account {
@@ -173,7 +168,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
   // Used to initialize counters in the subgraph
   event StakeCurateCreated();
-  event ChangedStakeCurateSettings(address _governor, address _burner);
+  event ChangedStakeCurateSettings(address _governor);
   event ArbitratorAllowance(IArbitrator _arbitrator, bool _allowance);
 
   event AccountCreated(uint56 indexed _accountId);
@@ -224,12 +219,18 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
   // ----- CONSTANTS -----
 
+  uint256 internal constant RULING_OPTIONS = 2;
+
   // these used to be variable settings, but due to edge cases they would cause
   // to previous lists if minimums were increased, or maximum decreased,
   // they were chosen to be constants instead.
 
   uint32 internal constant MIN_CHALLENGER_STAKE_RATIO = 2_083; // 20.83%
   uint16 internal constant BURN_RATE = 200; // 2%
+
+  // receives the burns, could be an actual burn address like address(0)
+  // could alternatively act as some kind of public goods funding, or rent.
+  address internal constant BURNER = 0xe5bcEa6F87aAEe4a81f64dfDB4d30d400e0e5cf4;
 
   // prevents relevant historical balance checks from being too long
   uint32 internal constant MAX_AGE_FOR_INCLUSION = 40 days;
@@ -300,12 +301,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   /** 
    * @dev Constructs the StakeCurate contract.
    * @param _governor Can change these settings
-   * @param _burner Recipient of burn fees
    * @param _metaEvidence IPFS uri of the initial MetaEvidence
    */
-  constructor(address _governor, address _burner, string memory _metaEvidence) {
+  constructor(address _governor, string memory _metaEvidence) {
     stakeCurateSettings.governor = _governor;
-    stakeCurateSettings.burner = _burner;
 
     // purpose: prevent dispute zero from being used.
     // this dispute has the ArbitrationSetting = 0. it will be
@@ -318,7 +317,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     // address(0) can still have an account, though
 
     emit StakeCurateCreated();
-    emit ChangedStakeCurateSettings(_governor, _burner);
+    emit ChangedStakeCurateSettings(_governor);
     emit MetaEvidence(0, _metaEvidence);
     emit ArbitrationSettingCreated(0, address(0), "");
   }
@@ -328,19 +327,16 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   /**
    * @dev Governor changes the general settings of Stake Curate
    * @param _governor Can change these settings
-   * @param _burner Recipient of burn fees
    * @param _metaEvidence IPFS uri of the initial MetaEvidence
    */
   function changeStakeCurateSettings(
     address _governor,
-    address _burner,
     string calldata _metaEvidence
   ) external {
     require(msg.sender == stakeCurateSettings.governor);
     // currentMetaEvidenceId must be incremental, so preserve previous one.
     stakeCurateSettings.governor = _governor;
-    stakeCurateSettings.burner = _burner;
-    emit ChangedStakeCurateSettings(_governor, _burner);
+    emit ChangedStakeCurateSettings(_governor);
     stakeCurateSettings.currentMetaEvidenceId++;
     emit MetaEvidence(stakeCurateSettings.currentMetaEvidenceId, _metaEvidence);
   }
@@ -827,7 +823,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       balanceRecordRoutine(item.accountId, valueToken, ownerValueAmount - arbFees - valueBurn);
 
       // we send the burned value to burner
-      payable(stakeCurateSettings.burner).send(valueBurn);
+      payable(BURNER).send(valueBurn);
 
       // refund leftovers to challenger, in practice leftovers > 0 (due to Cint32 noise)
       address challenger = accounts[commit.challengerId].owner;
@@ -1119,12 +1115,12 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     if (_token == valueToken) {
       // value related withdrawal. it is beneficiary responsability to accept value
       if (_burnRate != 0) {
-        payable(stakeCurateSettings.burner).send(_amount - toBeneficiary);
+        payable(BURNER).send(_amount - toBeneficiary);
       }
       payable(_beneficiary).send(_amount);
     } else {
       if (_burnRate != 0) {
-        _token.transfer(stakeCurateSettings.burner, _amount - toBeneficiary);
+        _token.transfer(BURNER, _amount - toBeneficiary);
       }
       _token.transfer(_beneficiary, toBeneficiary);
     }
