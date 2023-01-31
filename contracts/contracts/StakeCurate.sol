@@ -146,8 +146,9 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     uint56 itemId;
     DisputeState state;
     uint32 itemStake; // unlocks to submitter if Keep, sent to challenger if Remove
-    uint32 valueStake; // to be awarded to the side that wins the dispute. 
-    uint72 freespace;
+    uint32 valueStake; // to be awarded to the side that wins the dispute.
+    uint32 targetItemTimestamp;
+    uint40 freespace;
     // ----
     IERC20 token;
     uint32 challengerStake; // put by the challenger, sent to whoever side wins.
@@ -812,6 +813,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
         state: DisputeState.Used,
         itemStake: Cint32.compress(itemStakeAfterRatio),
         valueStake: Cint32.compress(arbFees + valueBurn),
+        targetItemTimestamp: item.lastUpdated,
         freespace: 0,
         token: list.token,
         challengerStake: Cint32.compress(challengerTokenStakeNeeded),
@@ -899,7 +901,13 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
     if (_ruling == 2) {
       // challenger won
-      item.state = ItemState.Removed;
+      // this will often remove the item, but if someone refreshed or edited the item
+      // after dispute was created, then it will be included back
+      if (item.lastUpdated > dispute.targetItemTimestamp) {
+        item.state = ItemState.Collateralized;
+      } else {
+        item.state = ItemState.Removed;
+      }
       // transfer token reward to challenger
       address challenger = accounts[dispute.challengerId].owner;
       processWithdrawal(challenger, dispute.token, Cint32.decompress(dispute.itemStake), BURN_RATE);
