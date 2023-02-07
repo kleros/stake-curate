@@ -574,15 +574,23 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     emit ItemRefreshed(_itemId, accountIdOf[msg.sender], _stake);
   }
 
+  /**
+   * @dev Routine common to edit and refresh.
+   * @param _itemId Id of the item.
+   * @param _stake How much collateral backs up the item, compressed.
+   * @param _forListVersion Timestamp of the version this action is intended for.
+   * If list governor were to frontrun a version change, then it reverts.
+   * @param _forItemAt Timestamp of the item that is about to be refreshed.
+   * If some other party were to frontrun a sequence to edit
+   * about the item, the sender would prevent themselves from being liable
+   * for an edition that was purposely wrong.
+   */
   function editRefreshCommon(
     uint56 _itemId,
     uint32 _stake,
     uint32 _forListVersion,
     uint32 _forItemAt
   ) internal {
-    // adoption logic is the exact same. return the adoption type at the end.
-    // item fields should be manually edited here.
-    // edit the harddata exclusively on editItem
     Item memory preItem = items[_itemId];
     List memory list = lists[preItem.listId];
     require(preItem.state != ItemState.Nothing);
