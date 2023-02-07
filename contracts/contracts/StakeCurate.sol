@@ -803,8 +803,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
       // refund leftovers to challenger, in practice leftovers > 0 (due to Cint32 noise)
       address challenger = accounts[commit.challengerId].owner;
-      commit.token.transfer(challenger, challengerTokenAmount - challengerTokenStakeNeeded);
       payable(challenger).send(challengerValueAmount - arbFees - valueBurn);
+      commit.token.transfer(challenger, challengerTokenAmount - challengerTokenStakeNeeded);
 
       // store the dispute
       disputes[id] = DisputeSlot({
