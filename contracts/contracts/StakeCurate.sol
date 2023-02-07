@@ -195,6 +195,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     bytes _harddata
   );
 
+  event ItemRefreshed(uint56 indexed _itemId, uint56 indexed _accountId, uint32 _stake);
+
   event ItemStartRetraction(uint56 indexed _itemId);
   event ItemStopRetraction(uint56 indexed _itemId);
 
@@ -531,6 +533,9 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
    * @param _stake How much collateral backs up the item, compressed.
    * @param _forListVersion Timestamp of the version this action is intended for.
    * If list governor were to frontrun a version change, then it reverts.
+   * @param _forItemAt Timestamp of the item that is about to be edited.
+   * If some other party were to frontrun a sequence to change something
+   * about the item, the sender would prevent themselves from being liable.
    * @param _ipfsUri IPFS uri that links to the content of the item
    * @param _harddata Optional data that is stored on-chain
    */
@@ -542,61 +547,88 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     string calldata _ipfsUri,
     bytes calldata _harddata
   ) external {
+    editRefreshCommon(_itemId, _stake, _forListVersion, _forItemAt);
+    // harddata doesn't affect item inclusion, so we can mutate it.
+    items[_itemId].harddata = _harddata;
+    emit ItemEdited(_itemId, accountIdOf[msg.sender], _stake, _ipfsUri, _harddata);
+  }
+
+  /**
+   * @notice Re-includes an item without creating a new edition.
+   * @param _itemId Id of the item to edit.
+   * @param _stake How much collateral backs up the item, compressed.
+   * @param _forListVersion Timestamp of the version this action is intended for.
+   * If list governor were to frontrun a version change, then it reverts.
+   * @param _forItemAt Timestamp of the item that is about to be refreshed.
+   * If some other party were to frontrun a sequence to edit
+   * about the item, the sender would prevent themselves from being liable
+   * for an edition that was purposely wrong.
+   */
+  function refreshItem(
+    uint56 _itemId,
+    uint32 _stake,
+    uint32 _forListVersion,
+    uint32 _forItemAt
+  ) external {
+    editRefreshCommon(_itemId, _stake, _forListVersion, _forItemAt);
+    emit ItemRefreshed(_itemId, accountIdOf[msg.sender], _stake);
+  }
+
+  function editRefreshCommon(
+    uint56 _itemId,
+    uint32 _stake,
+    uint32 _forListVersion,
+    uint32 _forItemAt
+  ) internal {
+    // adoption logic is the exact same. return the adoption type at the end.
+    // item fields should be manually edited here.
+    // edit the harddata exclusively on editItem
     Item memory preItem = items[_itemId];
     List memory list = lists[preItem.listId];
-    // todo you're not checking if the item even exists. you need to assert its not "nothing"
+    require(preItem.state != ItemState.Nothing);
     require(_forListVersion == list.versionTimestamp);
     require(_forItemAt == preItem.lastUpdated);
+
     AdoptionState adoption = getAdoptionState(_itemId);
     uint56 senderId = accountRoutine(msg.sender);
 
     if (adoption == AdoptionState.Revival) {
       require(_stake >= list.requiredStake);
     } else {
-      if (preItem.accountId == senderId || adoption == AdoptionState.MatchOrRaise) {
-        // if sender is current owner, it's enough if they match
-        // also, if item is currently challenged, to cover an edge case in which
-        // item owner doesn't bother to raise stakes in a highly disputed item
-        // that has a prohibitively high outbidRatio, anyone can take the item
-        // if they match the bid.
-        require(_stake >= preItem.nextStake);
-      } else {
-        // sender neither is current, neither can item be adopted.
-        revert();
-      }
+      require(preItem.accountId == senderId || adoption == AdoptionState.MatchOrRaise);
+      // if sender is current owner, it's enough if they match
+      // also, if item is currently challenged, to cover an edge case in which
+      // item owner doesn't bother to raise stakes in a highly disputed item
+      // that has a prohibitively high outbidRatio, anyone can take the item
+      // if they match the bid.
+      require(_stake >= preItem.nextStake);
     }
-
+  
     require(_stake <= list.maxStake);
     require(accounts[senderId].withdrawingTimestamp == 0);
-    
+  
     // instead of further checks, just edit the item and do a status check.
-    items[_itemId] = Item({
-      accountId: senderId,
-      listId: preItem.listId,
-      retractionTimestamp: 0,
-      state: preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Collateralized,
-      lastUpdated: uint32(block.timestamp),
-      /**
-       * If the item wasn't included before this tx
-       *  nothing was collateralizing it, so the canonItemStake doesn't serve
-       *  any purpose and will be overwritten by the passed _stake.
-       * Otherwise, we will make the regularStake be the stake that was
-       *  considered to be collateralizing the item at the time of this function.
-       */
-      regularStake: adoption == AdoptionState.None ? getCanonItemStake(_itemId) : _stake,
-      nextStake: _stake,
-      freespace: 0,
-      liveSince: adoption == AdoptionState.Revival ? uint32(block.timestamp) : preItem.liveSince,
-      freespace2: 0,
-      harddata: _harddata
-    });
+    Item storage item = items[_itemId];
+    item.accountId = senderId;
+    item.retractionTimestamp = 0;
+    item.state = preItem.state == ItemState.Disputed ? ItemState.Disputed : ItemState.Collateralized;
+    item.lastUpdated = uint32(block.timestamp);
+    /**
+     * If the item wasn't included before this tx
+     *  nothing was collateralizing it, so the canonItemStake doesn't serve
+     *  any purpose and will be overwritten by the passed _stake.
+     * Otherwise, we will make the regularStake be the stake that was
+     *  considered to be collateralizing the item at the time of this function.
+     */
+    item.regularStake = adoption == AdoptionState.None ? getCanonItemStake(_itemId) : _stake;
+    item.nextStake = _stake;
+    item.liveSince = adoption == AdoptionState.Revival ? uint32(block.timestamp) : preItem.liveSince;
+
     // if not Collateralized, something went wrong so revert.
     // you can also edit items while they are Disputed, as that doesn't change
     // anything about the Dispute in place.
     ItemState newState = getItemState(_itemId);
     require(newState == ItemState.Collateralized || newState == ItemState.Disputed);    
-
-    emit ItemEdited(_itemId, senderId, _stake, _ipfsUri, _harddata);
   }
 
   /**
