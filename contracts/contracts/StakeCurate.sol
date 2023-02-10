@@ -241,11 +241,14 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   uint32 internal constant BALANCE_SPLIT_PERIOD = 6 hours;
 
   // seconds until a challenge reveal can be accepted
-  uint32 internal constant MIN_TIME_FOR_REVEAL = 5 minutes;
-  // seconds until a challenge commit is too old
+  uint32 internal constant MIN_TIME_FOR_REVEAL = 1 minutes;
+  // seconds until a challenge commit is considered revoked
   // this is also the amount of time it takes for an item to be held by the nextStake
-  // this is also the amount of time it takes for an item to be retracted
-  uint32 internal constant MAX_TIME_FOR_REVEAL = 1 hours;
+  uint32 internal constant MAX_TIME_FOR_REVEAL = 5 minutes;
+
+  // amount of time it takes for an item to be retracted.
+  // must be strictly higher than max time for reveal.
+  uint32 internal constant RETRACTION_PERIOD = MAX_TIME_FOR_REVEAL * 3;
 
   /**
    * @dev This is a hack, you want the loser side to pay for the arbFees
@@ -531,6 +534,26 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
    * @notice Edits an item, adopts it if not owned by this account and able.
    * @param _itemId Id of the item to edit.
    * @param _stake How much collateral backs up the item, compressed.
+   * @param _ipfsUri IPFS uri that links to the content of the item
+   * @param _harddata Optional data that is stored on-chain
+   */
+  function editItem(
+    uint56 _itemId,
+    uint32 _stake,
+    string calldata _ipfsUri,
+    bytes calldata _harddata
+  ) external {
+    editRefreshCommon(_itemId, _stake);
+    // harddata doesn't affect item inclusion, so we can mutate it.
+    items[_itemId].harddata = _harddata;
+    emit ItemEdited(_itemId, accountIdOf[msg.sender], _stake, _ipfsUri, _harddata);
+  }
+
+  /**
+   * @notice Edits an item, adopts it if not owned by this account and able.
+   * @dev In absence of account abstraction, protects from frontrunning.
+   * @param _itemId Id of the item to edit.
+   * @param _stake How much collateral backs up the item, compressed.
    * @param _forListVersion Timestamp of the version this action is intended for.
    * If list governor were to frontrun a version change, then it reverts.
    * @param _forItemAt Timestamp of the item that is about to be edited.
@@ -539,7 +562,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
    * @param _ipfsUri IPFS uri that links to the content of the item
    * @param _harddata Optional data that is stored on-chain
    */
-  function editItem(
+  function editItemSafe(
     uint56 _itemId,
     uint32 _stake,
     uint32 _forListVersion,
@@ -547,13 +570,25 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     string calldata _ipfsUri,
     bytes calldata _harddata
   ) external {
-    editRefreshCommon(_itemId, _stake, _forListVersion, _forItemAt);
+    require(_forListVersion == lists[items[_itemId].listId].versionTimestamp);
+    require(_forItemAt == items[_itemId].lastUpdated);
+    editRefreshCommon(_itemId, _stake);
     // harddata doesn't affect item inclusion, so we can mutate it.
     items[_itemId].harddata = _harddata;
     emit ItemEdited(_itemId, accountIdOf[msg.sender], _stake, _ipfsUri, _harddata);
   }
 
   /**
+   * @notice Re-includes an item without creating a new edition.
+   * @param _itemId Id of the item to edit.
+   * @param _stake How much collateral backs up the item, compressed.
+   */
+  function refreshItem(uint56 _itemId, uint32 _stake) external {
+    editRefreshCommon(_itemId, _stake);
+    emit ItemRefreshed(_itemId, accountIdOf[msg.sender], _stake);
+  }
+
+    /**
    * @notice Re-includes an item without creating a new edition.
    * @param _itemId Id of the item to edit.
    * @param _stake How much collateral backs up the item, compressed.
@@ -564,13 +599,15 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
    * about the item, the sender would prevent themselves from being liable
    * for an edition that was purposely wrong.
    */
-  function refreshItem(
+  function refreshItemSafe(
     uint56 _itemId,
     uint32 _stake,
     uint32 _forListVersion,
     uint32 _forItemAt
   ) external {
-    editRefreshCommon(_itemId, _stake, _forListVersion, _forItemAt);
+    require(_forListVersion == lists[items[_itemId].listId].versionTimestamp);
+    require(_forItemAt == items[_itemId].lastUpdated);
+    editRefreshCommon(_itemId, _stake);
     emit ItemRefreshed(_itemId, accountIdOf[msg.sender], _stake);
   }
 
@@ -578,25 +615,15 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
    * @dev Routine common to edit and refresh.
    * @param _itemId Id of the item.
    * @param _stake How much collateral backs up the item, compressed.
-   * @param _forListVersion Timestamp of the version this action is intended for.
-   * If list governor were to frontrun a version change, then it reverts.
-   * @param _forItemAt Timestamp of the item that is about to be refreshed.
-   * If some other party were to frontrun a sequence to edit
-   * about the item, the sender would prevent themselves from being liable
-   * for an edition that was purposely wrong.
    */
   function editRefreshCommon(
     uint56 _itemId,
-    uint32 _stake,
-    uint32 _forListVersion,
-    uint32 _forItemAt
+    uint32 _stake
   ) internal {
     Item memory preItem = items[_itemId];
     List memory list = lists[preItem.listId];
     require(preItem.state != ItemState.Nothing);
-    require(_forListVersion == list.versionTimestamp);
-    require(_forItemAt == preItem.lastUpdated);
-
+  
     AdoptionState adoption = getAdoptionState(_itemId);
     uint56 senderId = accountRoutine(msg.sender);
 
@@ -1009,7 +1036,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     } else if (
         // gone fully through retraction
         item.retractionTimestamp != 0
-        && item.retractionTimestamp + MAX_TIME_FOR_REVEAL <= block.timestamp
+        && item.retractionTimestamp + RETRACTION_PERIOD <= block.timestamp
     ) {
       return (ItemState.Retracted);
     } else if (item.lastUpdated <= list.versionTimestamp) {
