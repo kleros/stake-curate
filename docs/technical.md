@@ -242,15 +242,35 @@ To calculate the daily % burn a commit camper would have to use, compared to the
 
 `burnRate` * `minChallengerStake` * (`1 days` / `maxRevealTime`)
 
-The target I thought that was gentle enough to allow was, to force them to burn 10% every day, of the value they want to be able to frontrun. This would mean that, after 10 days of sustaining this attack, they will have lost the entire value of the item. Maybe 
-
 Some targets for these constants I chose:
 
 - Burn rate should be small, but it's already estimated to be 2%, so this should be low enough.
 - Min challenger stake should be low. Ideally 20% or lower.
-- Max reveal time should be large enough to not be too punishing to users. Currently it's 1h, but it could go lower.
+- Max reveal time being large gives more time to reveal, to protect them against their commit being timed out. I thought 5 minutes was enough.
 
-I think Max Reveal Time could go to 30 minutes, with the respective warnings to the users, that they must reveal within 30min or they will get burned. This would force campers to waste 20% daily instead.
+With the respective warnings to the users, that they must reveal within 5 min or they will get burned. This would force campers to waste 120% daily instead.
+
+### Commit Reveal being mandatory
+
+> Isn't it bad UX?
+
+It's currently hardcoded at [1 min, 5 min), so, it might be a bit tight.
+
+> Shouldn't it then be optional?
+
+Due to how Stake Curate is structured, with stakes being shared across all lists, it would be a security hazard to allow for challenges to be instantaneous. Forcing users to go through commit reveal is necessary to prevent frontrunning attacks. This is why in order to commit, you also put a deposit then.
+
+> Why not overwrite the current challenger to the earliest challenger who committed before?
+
+There's a technicality around `challengerType` that prevents this. Basically, a Challenge Type that only targets a small % of the item stake, will only lock that percentage from the owner. So, the earlier challenge would have to update this value, which might become too large. The item owner did not necessarily have to fully collateralize the item in order for it to be challengeable.
+
+There are also other conditions that might be different: maybe at the time the earlier commit was revealed, the retraction period of the item had went off. Should the item owner be saved? Or, the withdrawing period had went off. Should the item be fully uncollateralized then? This behaviour is currently undefined and defining it would increase complexity severely.
+
+But mostly, there's a more important underlying reason. Stakes are shared, so if I get a challenge towards item A, I could frontrun a challenge towards item B (which I also control). Being able to backtrack the history of the collateral across items is either unfeasible, or complex enough to delay launch enough for it to not be worth it.
+
+> But the UX is still bad, and bad UX can mean no users.
+
+In this case, the frontend could just support an autoreveal feature. Have the commits be revealed automatically by a bot. You have a toggle for autoreveal, this feature could be supported in cheap chains. The feature needs to be toggled on, because the commit information would be sent to a trusted server, but for low value use cases, the risk should be acceptable. The server could batch these reveals together to make them even cheaper.
 
 ### Balance Split Records
 
