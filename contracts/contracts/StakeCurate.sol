@@ -14,6 +14,7 @@ import "./interfaces/IMetaEvidence.sol";
 import "./interfaces/IPost.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./Cint32.sol";
+import "./KlerosV2Helper.sol";
 
 /**
  * @title Stake Curate
@@ -157,10 +158,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     uint8 freespace2;
   }
 
-  struct ArbitrationSetting {
-    bytes arbitratorExtraData;
-  }
-
   // ----- EVENTS -----
 
   // Used to initialize counters in the subgraph
@@ -174,7 +171,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   event AccountStartWithdraw(uint56 indexed _accountId);
   event AccountStopWithdraw(uint56 indexed _accountId);
 
-  event ArbitrationSettingCreated(uint56 indexed _arbSettingId, bytes _arbitratorExtraData);
+  event ArbitrationSettingCreated(uint56 indexed _arbSettingId, bytes32 _arbitrationSetting);
 
   event ListUpdated(uint56 indexed _listId, List _list, string _metalist);
 
@@ -292,7 +289,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   ChallengeCommit[] public challengeCommits;
   mapping(uint56 => DisputeSlot) public disputes;
   mapping(uint256 => uint56) public disputeIdToLocal;
-  mapping(uint56 => ArbitrationSetting) public arbitrationSettings;
+  mapping(uint56 => bytes32) public arbitrationSettings;
 
   /** 
    * @dev Constructs the StakeCurate contract.
@@ -432,15 +429,13 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
   /**
    * @dev Create arbitrator setting. Will be immutable, and assigned to an id.
-   * @param _arbitratorExtraData The extra data
+   * @param _arbitrationSetting The packed arbitrationSetting
    */
-  function createArbitrationSetting(bytes calldata _arbitratorExtraData)
+  function createArbitrationSetting(bytes32 _arbitrationSetting)
       external returns (uint56 id) {
     unchecked {id = stakeCurateSettings.arbitrationSettingCount++;}
-    arbitrationSettings[id] = ArbitrationSetting({
-      arbitratorExtraData: _arbitratorExtraData
-    });
-    emit ArbitrationSettingCreated(id, _arbitratorExtraData);
+    arbitrationSettings[id] = _arbitrationSetting;
+    emit ArbitrationSettingCreated(id, _arbitrationSetting);
   }
 
   /**
@@ -758,8 +753,9 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     ItemState itemState = getItemState(_itemId);
     List memory list = lists[item.listId];
 
-    ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
-    uint256 arbFees = ARBITRATOR.arbitrationCost(arbSetting.arbitratorExtraData);
+    bytes memory arbitratorExtraData =
+      KlerosV2Helper.arbSettingToExtraData(arbitrationSettings[list.arbitrationSettingId]);
+    uint256 arbFees = ARBITRATOR.arbitrationCost(arbitratorExtraData);
     uint256 valueBurn = arbFees * BURN_RATE / 10_000;
 
     uint256 ownerValueAmount = Cint32.decompress(getCompressedFreeStake(item.accountId, valueToken));
@@ -853,7 +849,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       uint256 arbitratorDisputeId =
         ARBITRATOR.createDispute{
           value: arbFees}(
-          RULING_OPTIONS, arbSetting.arbitratorExtraData
+          RULING_OPTIONS, arbitratorExtraData
         );
       // if this reverts, the arbitrator is malfunctioning. the commit will revoke
       require(disputeIdToLocal[arbitratorDisputeId] == 0);
@@ -1021,9 +1017,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     uint32 compressedFreeStake = getCompressedFreeStake(item.accountId, list.token);
     uint256 valueFreeStake = Cint32.decompress(getCompressedFreeStake(item.accountId, valueToken));
 
-    ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
+    bytes memory arbitratorExtraData =
+      KlerosV2Helper.arbSettingToExtraData(arbitrationSettings[list.arbitrationSettingId]);
+      
     uint256 valueNeeded =
-      ARBITRATOR.arbitrationCost(arbSetting.arbitratorExtraData)
+      ARBITRATOR.arbitrationCost(arbitratorExtraData)
       * BURN_RATE / 10_000;
 
     if (
@@ -1080,9 +1078,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
 
     uint32 compressedItemStake = getCanonItemStake(_itemId);
 
-    ArbitrationSetting memory arbSetting = arbitrationSettings[list.arbitrationSettingId];
+  bytes memory arbitratorExtraData =
+      KlerosV2Helper.arbSettingToExtraData(arbitrationSettings[list.arbitrationSettingId]);
+      
     uint256 valueNeeded =
-      ARBITRATOR.arbitrationCost(arbSetting.arbitratorExtraData)
+      ARBITRATOR.arbitrationCost(arbitratorExtraData)
       * BURN_RATE / 10_000;
     
     if (accounts[item.accountId].couldWithdrawAt + list.ageForInclusion > block.timestamp) {
