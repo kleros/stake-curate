@@ -122,7 +122,6 @@ These are some things that came up on the way, but were not fundamental. As they
 - ERC20 tokens for stakes, instead of value.
 - Value also used as stake, to make loser pay arbitration fee
 - Challenge types
-- Multiple Arbitrators
 - Adoptions
 - Posts and threads
 
@@ -140,25 +139,6 @@ It comes with the added complexity of handling burns in the native token, checki
 ## Why Challenge Types
 
 For some removal use cases, it makes sense for challengers to obtain a smaller reward, especially for items that should be removed due to honest mistakes. A human submission that would never have possibly passed through because of a mirrored video should not be punished like an attacker trying to enter the registry twice claiming he's his twin. It is relatively easy to implement as well, just requiring an extra parameter to commit, reveal, store, and distribute around. The challenger still has to send the same deposit. Challenge Types are stored in the MetaList.
-
-## Why multiple arbitrators
-
-Stake Curate allows to use Arbitrators if they are compatible with kleros-v2 Arbitrator Interface. This was chosen so that:
-
-- Allows having faster Dispute process for some items, like going through a reality.eth compatible with Arbitrator interface for faster results in low value lists.
-- Allows S.C. to be a more credibly neutral public good, if other projects want to try to create Arbitrators and compete
-- Having a hardcoded Arbitrator could be an issue if Kleros V2 is not upgradable
-  - however, if Stake Curate is upgradable by proxy, then adding a new hardcoded Arbitrator could be simple
-
-Previously, arbitrators went through `arbitratorAllowance`, in which the S.C. governor would whitelist Arbitrators. After burns were added to the native token, malicious arbitrators are not such a big problem, and this feature required checking for List Legality. To remove expensive and cumbersome List Legality checks, it was removed. So, malicious arbitrators can be used now.
-
-Some caveats multiple arbitrators has:
-
-- They could refuse to rule, keeping an Item locked forever. It would only happen in malicious Lists. A way out of this is setting up a maximum amount of time an item can be challenged (like, a year) so that, in the case of a critical mistake, at least there's a way to recover the funds.
-- extra gas expenses to read the arbitrator on storage on challenge reveals and rulings, and to keep track of the arbitrator for the Dispute (because, lists could change the arbitrator)
-- mapping to get localId requires arbitrator
-
-A way to go around the potential malicious arbitrators is, get the whitelist back in, but don't check for List Legality. Just, if arbitrator is not whitelisted, use a default arbitrator set by the contract (such as KlerosV2), making List Legality not a constrain.
 
 ## Why adoptions
 
