@@ -106,7 +106,7 @@ By using the resources the attacker is providing to the item owner, the cost of 
 
 Let's first lay down the constraints:
 
-- In order to be included, items need to be continuously collateralized
+- In order to be included, items need to be collateralized
 - Edits
 - Commit reveal for challenges
 - Contains (mostly) Classic and Light Curate
@@ -148,6 +148,8 @@ There are two types of adoptions considered:
 - *Revive Adoptions*, in which items that are non-included, become included.
 - *MatchOrRaise Adoptions*, in which items that are either Disputed or whose owner is performing actions that signal neglect (retracting the item, or withdrawing their stake), are up to auction. New owners can obtain ownership over it by either matching or raising the stake that is collateralizing the item.
 
+*Adopting* an already *Collateralized* Item is **not** allowed, because it would allow griefers to take ownership over the item and then self-challenge. This would prevent honest submitters from having the guarantee of the grief being capped to a maximmum of `log(n) * log(n)` denial time, and prevent them from obtaining compensation for the damage caused.
+
 Reasons why having adoptions is preferrable:
 
 - If squatting is to be expected, for items that suffer the consequences (the item removed, and its `itemId` innaccessible), the history (editions, challenges, evidence...) of a single item could become dispersed across different `itemIds`.
@@ -158,7 +160,7 @@ Reasons why having adoptions is preferrable:
 Some examples on when this would be useful:
 
 - List updates to a new version, rendering all items outdated, and many item owners don't bother refreshing their items, so they stop being included. Parties interested in preserving the curated items could review them and batch "adopt" them, taking liability over them and getting them to be included again.
-  - Without adoptions, this actor may have to call `addItem` and it would consume extra calldata to resubmit everything. Also, history for the previous item would disjoin.
+  - Without adoptions, this actor may have to call `addItem` and it would consume extra calldata to resubmit everything. Also, history (previous editions, disputes, references, and the thread) for the previous item would disjoin.
 - An item continues being grief challenged, and the current owner doesn't raise the stakes. Someone takes ownership over the item and raises the stakes, so that the griefing attack is too expensive to continue.
 
 Adoptions is ingrained in the logic and it wouldn't save much code or complexity to remove it. This is because similar comparisons need to be made anyway to cover edge cases around raising stakes. It's a "nice to have".
@@ -201,6 +203,21 @@ Prevents item owners to frontrun retracting their stake in response to a challen
 
 Users can be interested in stop being held liable from certain items, without having to uninclude every single item at the same time. The alternative from this would be to, if the item was wrong, to direct a challenge towards themselves, but then they would lose funds from the burns, and from paying the arbitration fees.
 
+This period should, at the very least, be equal to the `MAX_TIME_FOR_REVEAL`. I hardcoded it as a constant that makes it three times this amount, after concerns over potential attacks compared to just making it equal to `MAX_TIME_FOR_REVEAL`.
+
+> Imagine a list in which, under circumstances, a certain address is the only one allowed to challenge. For example, a list governed by Kleros Moderate in which only the reporter is allowed to initiate a report. This right to be the challenger has a 5 minutes timeout from the time the report occurs. If retraction period equals this amount of time, then the submitter of the
+malicious item could get away with retracting it.
+
+This case presented may be niche, but there might be other reasons why the retraction period should be stricly larger than the time for reveal, and it doesn't create complexity as it's just a constant.
+
+### Outdated Items
+
+Whenever a list updates to a new version, a timestamp is set. All items submitted before or within that timestamp are considered *Outdated*. This renders them unchallengeable. The reason being, list governors are **not** trusted, and they could push malicious updates, such as changing the Policy and enable challenges against Editions that were previously correct, changing the token used by the list, or changing the arbitration settings.
+
+In other words, without this security feature or something similar, list governors can drain the funds of submitters.
+
+Instantly excluding all previous editions can have serious bad UX implications. Adoptions allows third parties to take ownership and collateralize the items back, if needed. If there is no interest from third parties to become liable for the items (e.g. social media account curation), then the users themselves are expected to refresh their items. List governors will be reminded of the consequences that updating the list has upon the users, and the frontend will recommend them to alert the users with an advance notice.
+
 ### Challenger Stake
 
 Challenger puts an ERC20 token stake as well. This stake covers two functions:
@@ -221,7 +238,13 @@ By abusing this, item owners could frontrun a challenge towards themselves and o
 
 But if you burn some of it, then it doesn't matter if both sides and the Arbitrator is controlled by the same party, they are guaranteed a loss.
 
-Why burns are proposed to be so low (2%) is related to commit reveal.
+There are two degrees of burns: failed commit burns, and dispute burns.
+
+Failed commit burns are rather low (currently 2%), you can read more on the rationale below in section *Commit Reveal for Challenges*.
+
+Dispute burns are higher (5%), the reason being, applying a small burn on disputes could result in attacks that might warrant a bigger burn to discourage.
+
+> Example, an user trolls in a Telegram group, having prepared a commit towards the Item that allows him to be in there. Some users in the group become exposed to the attack, that lasts 1 minute. Before any of the users can reveal a challenge towards him, he reveals a challlenge towards himself, paying a small burn plus arbitration fees. 
 
 ### Challenge Reason
 
