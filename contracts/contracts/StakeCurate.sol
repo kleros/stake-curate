@@ -223,7 +223,8 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   // they were chosen to be constants instead.
 
   uint32 internal constant MIN_CHALLENGER_STAKE_RATIO = 2_083; // 20.83%
-  uint16 internal constant BURN_RATE = 200; // 2%
+  uint16 internal constant FAILED_COMMIT_BURN_RATE = 200; // 2%
+  uint16 internal constant DISPUTE_BURN_RATE = 500; // 5%
 
   // receives the burns, could be an actual burn address like address(0)
   // could alternatively act as some kind of public goods funding, or rent.
@@ -756,7 +757,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     bytes memory arbitratorExtraData =
       KlerosV2Helper.arbSettingToExtraData(arbitrationSettings[list.arbitrationSettingId]);
     uint256 arbFees = ARBITRATOR.arbitrationCost(arbitratorExtraData);
-    uint256 valueBurn = arbFees * BURN_RATE / 10_000;
+    uint256 valueBurn = arbFees * DISPUTE_BURN_RATE / 10_000;
 
     uint256 ownerValueAmount = Cint32.decompress(getCompressedFreeStake(item.accountId, valueToken));
     uint256 ownerTokenAmount = Cint32.decompress(getCompressedFreeStake(item.accountId, list.token));
@@ -808,10 +809,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       // burn here
       address challenger = accounts[commit.challengerId].owner;
       processWithdrawal(
-        challenger, commit.token, Cint32.decompress(commit.tokenAmount), BURN_RATE
+        challenger, commit.token, Cint32.decompress(commit.tokenAmount), FAILED_COMMIT_BURN_RATE
       );
       processWithdrawal(
-        challenger, valueToken, Cint32.decompress(commit.valueAmount), BURN_RATE
+        challenger, valueToken, Cint32.decompress(commit.valueAmount), FAILED_COMMIT_BURN_RATE
       );
       emit CommitRevoked(_commitIndex);
     } else if (
@@ -908,10 +909,10 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     // revert here. so, this require is enough.
     require(commit.timestamp + MAX_TIME_FOR_REVEAL < block.timestamp);
     address challenger = accounts[commit.challengerId].owner;
-    // apply the big burn to the token amount.
-    processWithdrawal(challenger, commit.token, Cint32.decompress(commit.tokenAmount), BURN_RATE);
-    // apply the big burn to the value.
-    processWithdrawal(challenger, valueToken, Cint32.decompress(commit.valueAmount), BURN_RATE);
+    // apply the commit burn to the token amount.
+    processWithdrawal(challenger, commit.token, Cint32.decompress(commit.tokenAmount), FAILED_COMMIT_BURN_RATE);
+    // apply the commit burn to the value.
+    processWithdrawal(challenger, valueToken, Cint32.decompress(commit.valueAmount), FAILED_COMMIT_BURN_RATE);
   
     emit CommitRevoked(_commitIndex);
   }
@@ -973,7 +974,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       }
       // transfer token reward to challenger
       address challenger = accounts[dispute.challengerId].owner;
-      processWithdrawal(challenger, dispute.token, Cint32.decompress(dispute.itemStake), BURN_RATE);
+      processWithdrawal(challenger, dispute.token, Cint32.decompress(dispute.itemStake), DISPUTE_BURN_RATE);
       // return the valueStake to challenger
       payable(accounts[dispute.challengerId].owner).send(Cint32.decompress(dispute.valueStake));
     } else {
@@ -1001,7 +1002,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       uint256 newValueFreeStake = Cint32.decompress(compressedValueFreeStake) + Cint32.decompress(dispute.valueStake);
       balanceRecordRoutine(dispute.itemOwnerId, valueToken, newValueFreeStake);
       // send challenger stake as compensation to item owner
-      processWithdrawal(ownerAccount.owner, dispute.token, Cint32.decompress(dispute.challengerStake), BURN_RATE);
+      processWithdrawal(ownerAccount.owner, dispute.token, Cint32.decompress(dispute.challengerStake), DISPUTE_BURN_RATE);
     }
     emit Ruling(ARBITRATOR, _disputeId, _ruling);
   }
@@ -1022,7 +1023,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       
     uint256 valueNeeded =
       ARBITRATOR.arbitrationCost(arbitratorExtraData)
-      * BURN_RATE / 10_000;
+      * DISPUTE_BURN_RATE / 10_000;
 
     if (
       item.state == ItemState.Disputed
@@ -1083,7 +1084,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       
     uint256 valueNeeded =
       ARBITRATOR.arbitrationCost(arbitratorExtraData)
-      * BURN_RATE / 10_000;
+      * DISPUTE_BURN_RATE / 10_000;
     
     if (accounts[item.accountId].couldWithdrawAt + list.ageForInclusion > block.timestamp) {
       return false;
