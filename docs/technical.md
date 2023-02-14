@@ -199,16 +199,22 @@ Prevents item owners to frontrun withdrawing their stake in response to a challe
 
 ### Retraction Period
 
-Prevents item owners to frontrun retracting their stake in response to a challenge reveal. This is equivalent to removing an item from yourself.
+Prevents item owners to frontrun retracting their stake in response to a challenge reveal. This is equivalent to removing an item from yourself. *Retraction* is used instead of *Removal*, since the term *Removal* is already used for excluding items after a successful challenge.
 
 Users can be interested in stop being held liable from certain items, without having to uninclude every single item at the same time. The alternative from this would be to, if the item was wrong, to direct a challenge towards themselves, but then they would lose funds from the burns, and from paying the arbitration fees.
 
-This period should, at the very least, be equal to the `MAX_TIME_FOR_REVEAL`. I hardcoded it as a constant that makes it three times this amount, after concerns over potential attacks compared to just making it equal to `MAX_TIME_FOR_REVEAL`.
+This period should, at the very least, be equal to the `MAX_TIME_FOR_REVEAL`. I hardcoded it as a constant that makes it three times this amount (so, 15 minutes), after concerns over potential attacks compared to just making it equal to `MAX_TIME_FOR_REVEAL`.
 
 > Imagine a list in which, under circumstances, a certain address is the only one allowed to challenge. For example, a list governed by Kleros Moderate in which only the reporter is allowed to initiate a report. This right to be the challenger has a 5 minutes timeout from the time the report occurs. If retraction period equals this amount of time, then the submitter of the
 malicious item could get away with retracting it.
 
-This case presented may be niche, but there might be other reasons why the retraction period should be stricly larger than the time for reveal, and it doesn't create complexity as it's just a constant.
+> Another reason is that, maybe an attacker performs an attack with an item that is held with way more stake than expected, and only a few users could afford to deposit the `challengerStake` required. So, if none of those users can react in time, then the item is retracted before any challenges and the damage stays unpunished. This reason could be an argument in favor of raising this constant.
+
+These reasons presented may be niche, but there might be other reasons why the retraction period should be stricly larger than the time for reveal, and it doesn't create complexity as it's just a constant.
+
+### Max Stake
+
+Lists have a Max Stake parameter, that sets a limit to the `itemStake` items may have. Challlenges need to be backed by a `challengerStake` that is a ratio of the `itemStake`, so if items were to be able to be held by unbounded amounts, malicious actors could submit items beyond the reach of the challengers. Also, the greater the stakes, the more time it will take for a challenger with enough funds to react, which in turn grants attackers extra time to retract the items or challenge themselves.
 
 ### Outdated Items
 
