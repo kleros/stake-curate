@@ -163,7 +163,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
   // Used to initialize counters in the subgraph
   event StakeCurateCreated();
   event ChangedStakeCurateSettings(address _governor);
-  event ArbitratorAllowance(IArbitrator _arbitrator, bool _allowance);
 
   event AccountCreated(uint56 indexed _accountId);
   // tokens that can possibly hold amounts between [2^255, 2^256-1] will break this offset.
