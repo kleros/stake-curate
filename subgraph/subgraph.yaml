@@ -33,40 +33,42 @@ dataSources:
       eventHandlers:
         - event: StakeCurateCreated()
           handler: handleStakeCurateCreated
-        - event: ChangedStakeCurateSettings(uint256,uint32,address)
+        - event: ChangedStakeCurateSettings(address)
           handler: handleChangedStakeCurateSettings
-        - event: AccountCreated(address,uint32)
+        - event: AccountCreated(indexed uint56)
           handler: handleAccountCreated
-        - event: AccountFunded(uint56,uint32)
-          handler: handleAccountFunded
-        - event: AccountStartWithdraw(uint56)
+        - event: AccountBalanceChange(indexed uint56,indexed address,int256)
+          handler: handleAccountBalanceChange
+        - event: AccountStartWithdraw(indexed uint56)
           handler: handleAccountStartWithdraw
-        - event: AccountWithdrawn(uint56,uint32)
-          handler: handleAccountWithdrawn
-        - event: ArbitrationSettingCreated(address,bytes)
+        - event: AccountStopWithdraw(indexed uint56)
+          handler: handleAccountStopWithdraw
+        - event: ArbitrationSettingCreated(indexed uint56,bytes32)
           handler: handleArbitrationSettingCreated
+        - event: ListUpdated(indexed uint56,(uint56,uint32,uint56,uint32,uint32,address,uint32,uint32),string)
+          handler: handleListUpdated
+        - event: ItemAdded(indexed uint56,indexed uint56,indexed uint56,uint32,string,bytes)
+          handler: handleItemAdded
+        - event: ItemEdited(indexed uint56,indexed uint56,uint32,string,bytes)
+          handler: handleItemEdited
+        - event: ItemRefreshed(indexed uint56,indexed uint56,uint32)
+          handler: handleItemRefreshed
+        - event: ItemStartRetraction(indexed uint56)
+          handler: handleItemStartRetraction
+        - event: ItemStopRetraction(indexed uint56)
+          handler: ItemStopRetraction
+        - event: ChallengeCommitted(indexed uint256,indexed uint56,address,uint32,uint32)
+          handler: handleChallengeCommitted
+        - event: CommitReveal(indexed uint256,indexed uint56,uint16,string)
+          handler: handleCommitReveal
+        - event: CommitRevoked(indexed uint256)
+          handler: handleCommitRevoked
+        - event: ItemChallenged(indexed uint56,indexed uint256,indexed uint56)
+          handler: handleItemChallenged
+        - event: Post(indexed uint256,string)
+          handler: handlePost
         - event: Dispute(indexed address,indexed uint256,uint256,uint256)
           handler: handleDispute
-        - event: Evidence(indexed address,indexed uint256,indexed address,string)
-          handler: handleEvidence
-        - event: ItemAdded(uint56,uint56,uint56,string,bytes)
-          handler: handleItemAdded
-        - event: ItemAdopted(uint56,uint56)
-          handler: handleItemAdopted
-        - event: ItemChallenged(uint56,uint56,uint32,string)
-          handler: handleItemChallenged
-        - event: ItemEdited(uint56,string,bytes)
-          handler: handleItemEdited
-        - event: ItemRecommitted(uint56)
-          handler: handleItemRecommitted
-        - event: ItemStartRemoval(uint56)
-          handler: handleItemStartRemoval
-        - event: ItemStopRemoval(uint56)
-          handler: handleItemStopRemoval
-        - event: ListCreated(uint56,uint32,uint32,uint32,bool,uint8,uint56,string)
-          handler: handleListCreated
-        - event: ListUpdated(uint56,uint56,uint32,uint32,uint32,bool,uint8,uint56,string)
-          handler: handleListUpdated
         - event: MetaEvidence(indexed uint256,string)
           handler: handleMetaEvidence
         - event: Ruling(indexed address,indexed uint256,uint256)
