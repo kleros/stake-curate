@@ -73,7 +73,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     // can change the governor and update metaEvidence
     address governor;
     uint56 itemCount;
-    uint40 freespace2;
+    // 40 bits remaining
     //
     uint56 listCount;
     uint56 disputeCount;
@@ -86,7 +86,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     address owner;
     uint32 withdrawingTimestamp;
     uint32 couldWithdrawAt;
-    uint32 freespace;
+    // 32 bits remaining
   }
 
   struct List {
@@ -95,12 +95,12 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     uint56 arbitrationSettingId;
     uint32 versionTimestamp;
     uint32 maxStake; // protects from some bankrun attacks
-    uint16 freespace;
+    // 16 bits remaining
     // ----
     IERC20 token;
     uint32 challengerStakeRatio; // (basis points) challenger stake in proportion to the item stake
     uint32 ageForInclusion; // how much time from Young to Included, in seconds
-    uint32 freespace2;
+    // 32 bits remaining
   }
 
   struct Item {
@@ -120,11 +120,11 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     // tldr: prevent some frontrun attacks related to raising item stakes
     // the raised item stake will become effective after a period.
     uint32 nextStake;
-    uint8 freespace;
+    // 8 bits remaining
     // ---
     // last time item went from unchallengeable to challengeable
     uint32 liveSince;
-    uint224 freespace2;
+    // 224 bits remaining
     // arbitrary, optional data for on-chain consumption
     bytes harddata;
   }
@@ -139,7 +139,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     IERC20 token;
     ///
     uint56 challengerId;
-    uint200 freespace;
+    // 200 bits remaining
   }
 
   struct DisputeSlot {
@@ -149,13 +149,13 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     uint32 itemStake; // unlocks to submitter if Keep, sent to challenger if Remove
     uint32 valueStake; // to be awarded to the side that wins the dispute.
     uint32 targetItemTimestamp;
-    uint40 freespace;
+    // 40 bits remaining
     // ----
     IERC20 token;
     uint32 challengerStake; // put by the challenger, sent to whoever side wins.
     uint56 itemOwnerId; // items may change hands during the dispute, you need to store
     // the owner at dispute time.
-    uint8 freespace2;
+    // 8 bits remaining
   }
 
   // ----- EVENTS -----
@@ -513,9 +513,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       lastUpdated: uint32(block.timestamp),
       regularStake: _stake,
       nextStake: _stake,
-      freespace: 0,
       liveSince: 0,
-      freespace2: 0,
       harddata: _harddata
     });
     // if not Collateralized, something went wrong
@@ -703,8 +701,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       tokenAmount: _compressedTokenAmount,
       valueAmount: compressedvalue,
       token: _token,
-      challengerId: challengerId,
-      freespace: 0
+      challengerId: challengerId
     }));
     emit ChallengeCommitted(
       challengeCommits.length - 1, challengerId, _token,
@@ -877,11 +874,9 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
         itemStake: Cint32.compress(itemStakeAfterRatio),
         valueStake: Cint32.compress(arbFees + valueBurn),
         targetItemTimestamp: item.lastUpdated,
-        freespace: 0,
         token: list.token,
         challengerStake: Cint32.compress(challengerTokenStakeNeeded),
-        itemOwnerId: item.accountId,
-        freespace2: 0
+        itemOwnerId: item.accountId
       });
 
       emit ItemChallenged(id, _commitIndex, _itemId);
