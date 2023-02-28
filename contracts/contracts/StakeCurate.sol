@@ -38,7 +38,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
    * * also triggers if owner can withdraw. However, it could still be challenged
    * * if the owner had enough tokens.
    * Outdated: item was last updated before the last list version.
-   * Retracted: owner made it go through the retraction period.
    */
   enum ItemState {
     Nothing,
@@ -46,8 +45,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     Disputed,
     Removed,
     Uncollateralized,
-    Outdated,
-    Retracted
+    Outdated
   }
 
   /**
@@ -784,16 +782,13 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
       // but since ItemState.Outdated is only true if this check is true,
       // it would be redundant to check.
       commit.timestamp <= list.versionTimestamp
-      // b. retracted, a well timed sequence of bogus items could trigger these refunds.
+      // b. removed, a well timed sequence of bogus items could trigger these refunds.
       // when an item becomes retracted is completely predictable and should cause no ux issues.
-      || itemState == ItemState.Retracted
+      // OR, a challenge towards an item that has been removed, since it is also predictable.
+      || itemState == ItemState.Removed
       // c. a challenge towards an item that doesn't even exist
       || itemState == ItemState.Nothing
-      // d. a challenge towards an item that has been removed
-      // a sniper controlling the arbitrator could otherwise conditionally
-      // remove or keep an item on bogus lists, allowing themselves to trigger refunds.
-      || itemState == ItemState.Removed
-      // e. item owner can withdraw at reveal time.
+      // d. item owner can withdraw at reveal time.
       // this is predictable. the length of the period doesn't change.
       // another account could have taken ownership over the item, but
       // accounts with withdrawing timestamp > 0 cannot take ownership.
@@ -1031,7 +1026,7 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
         item.retractionTimestamp != 0
         && item.retractionTimestamp + RETRACTION_PERIOD <= block.timestamp
     ) {
-      return (ItemState.Retracted);
+      return (ItemState.Removed);
     } else if (item.lastUpdated <= list.versionTimestamp) {
       return (ItemState.Outdated);
     } else if (
@@ -1103,7 +1098,6 @@ contract StakeCurate is IArbitrable, IMetaEvidence, IPost {
     if (
       /** equivalent to:
         state == ItemState.Removed
-        || state == ItemState.Retracted
         || state == ItemState.Uncollateralized
         || state == ItemState.Outdated
       */
